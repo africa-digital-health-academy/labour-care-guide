@@ -73,13 +73,13 @@ function exportCSV() {
     (p.obs || []).length, (p.alerts || []).filter(a => a.severity === 'danger').length,
   ]);
   const csv = [head, ...rows].map(r => r.map(x => `"${String(x ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-  download(new Blob([csv], { type: 'text/csv' }), `parthograph-register-${new Date().toISOString().slice(0, 10)}.csv`);
+  download(new Blob([csv], { type: 'text/csv' }), `lcg-register-${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 async function backup() {
   const data = await exportBackup();
   download(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
-    `parthograph-backup-${new Date().toISOString().slice(0, 10)}.json`);
+    `lcg-backup-${new Date().toISOString().slice(0, 10)}.json`);
   toast('Backup downloaded ✓');
 }
 

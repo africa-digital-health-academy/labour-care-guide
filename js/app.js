@@ -1,8 +1,10 @@
-// app.js — boot, hash routing, top bar (clock + Ethiopian date), bottom nav,
-// and the heartbeat tick that re-checks schedules and time-based alerts for
-// every labouring woman — the "who needs me now" engine behind the ward board.
+// app.js - boot, hash routing, top bar (clock + Ethiopian date), bottom nav,
+// the heartbeat tick that re-checks schedules and time-based alerts for every
+// labouring woman (the "who needs me now" engine behind the ward board), and
+// the release plumbing: service-worker update chip, audio unlock, wake lock.
 
-import { h, clear, beep, toast, eatDate, APP_TZ } from './ui.js';
+import './version.js';
+import { h, clear, beep, toast, eatDate, APP_TZ, unlockAudio } from './ui.js';
 import { t } from './i18n.js';
 import { S, initStore, bus, savePatient } from './store.js';
 import { getProtocol, dueList, isLabouring } from './protocol.js';
@@ -39,6 +41,43 @@ function titleFor(r) {
   return (S.settings.facilityName || t('app_name'));
 }
 
+// ------------------------------------------------------ update handling ----
+// A new release is downloaded by the service worker in the background and then
+// WAITS. We show a chip; the midwife reloads when it suits her.
+
+let activateUpdate = null;   // set once a new worker is installed and waiting
+let reloadRequested = false;
+
+function setupUpdates(reg) {
+  const watch = worker => {
+    if (!worker) return;
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(reg);
+    });
+  };
+  if (reg.waiting && navigator.serviceWorker.controller) offerUpdate(reg);
+  watch(reg.installing);
+  reg.addEventListener('updatefound', () => watch(reg.installing));
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloadRequested) location.reload();
+  });
+  // a ward board left open for days still learns about a release
+  const check = () => reg.update().catch(() => {});
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+  setInterval(check, 60 * 60 * 1000);
+}
+
+function offerUpdate(reg) {
+  activateUpdate = () => {
+    reloadRequested = true;
+    if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    else location.reload();
+  };
+  render();
+}
+
+// -------------------------------------------------------------- render -----
+
 function render() {
   const r = route();
   clear(app);
@@ -46,7 +85,7 @@ function render() {
   const clockEl = h('div', { class: 'clock' });
   updateClock(clockEl);
 
-  // tapping the logo or the title always returns to the ward board (home) —
+  // tapping the logo or the title always returns to the ward board (home) -
   // the starting point where the clinician picks a woman or starts a new one.
   const goHome = () => { if (location.hash.replace(/^#\/?/, '')) location.hash = '#/'; else render(); };
 
@@ -56,6 +95,9 @@ function render() {
       : null,
     h('button', { class: 'btn-home', title: t('dashboard'), 'aria-label': t('dashboard'), onclick: goHome }, '🤰'),
     h('h1', { class: 'brand-title', title: t('dashboard'), onclick: goHome }, titleFor(r)),
+    activateUpdate
+      ? h('button', { class: 'update-chip', title: 'A new version is ready. Tap to reload.', onclick: () => activateUpdate() }, 'Update ready')
+      : null,
     clockEl,
   ));
 
@@ -101,7 +143,7 @@ async function tick() {
     if (!isLabouring(p)) continue;
     const proto = getProtocol(S.settings, p);
 
-    // time-based clinical alerts (progress limits, 2nd-stage duration, ROM…)
+    // time-based clinical alerts (progress limits, 2nd-stage duration, ROM...)
     const drafts = evaluateTime(p, S.settings, now);
     const added = addAlerts(p, drafts, 'time');
     if (added.length) {
@@ -130,18 +172,57 @@ async function tick() {
   if (changed || r.view === 'dashboard' || r.view === 'patient') render();
 }
 
+// ------------------------------------------------------------ wake lock ----
+// Keep the screen on while the app is in the foreground: a sleeping tablet
+// beeps to nobody. Silently unsupported on older WebViews and on battery saver.
+
+let wakeLock = null;
+async function keepAwake() {
+  try {
+    if (!('wakeLock' in navigator) || wakeLock) return;
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch { /* not supported, not visible, or battery saver: the app still works */ }
+}
+
 // ---------------------------------------------------------------- boot -----
 
+function bootError(err) {
+  clear(app);
+  app.append(h('div', { class: 'page' },
+    h('div', { class: 'card' },
+      h('h2', null, 'Could not open the local database'),
+      h('p', null, String((err && err.message) || err)),
+      h('p', { class: 'muted' }, 'Private browsing, a full disk, or an older browser can cause this. Labour records live only in this browser profile; nothing has been deleted.'),
+      h('button', { class: 'btn', onclick: () => location.reload() }, 'Retry'),
+    ),
+  ));
+}
+
 async function boot() {
-  await initStore();
+  // Ask the browser not to evict our data under storage pressure (best effort).
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch { /* ignore */ }
+  // Alarms are only allowed after a user gesture: unlock on the first tap/key.
+  document.addEventListener('pointerdown', unlockAudio, { once: true, passive: true });
+  document.addEventListener('keydown', unlockAudio, { once: true });
+
+  try {
+    await initStore();
+  } catch (err) {
+    bootError(err);
+    return;
+  }
   render();
   window.addEventListener('hashchange', render);
   bus.addEventListener('change', render);
   setInterval(tick, 30000);
 
-  // offline support
+  keepAwake();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) keepAwake(); });
+
+  // offline support + update chip
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => { /* file:// or unsupported — app still works online */ });
+    navigator.serviceWorker.register('sw.js').then(setupUpdates).catch(() => { /* file:// or unsupported: app still works online */ });
   }
 }
 

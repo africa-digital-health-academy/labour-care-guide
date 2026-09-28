@@ -5,7 +5,7 @@
 // Tigrinya, Somali and Afar are planned (see docs/ROADMAP.md).
 
 const en = {
-  app_name: 'Parthograph',
+  app_name: 'Labour Care Guide',
   dashboard: 'Labour ward',
   new_admission: 'New admission',
   reports: 'Reports',
@@ -58,7 +58,7 @@ const en = {
 };
 
 const am = {
-  app_name: 'ፓርቶግራፍ',
+  app_name: 'የምጥ እንክብካቤ መመሪያ',
   dashboard: 'የማዋለጃ ክፍል',
   new_admission: 'አዲስ ምዝገባ',
   reports: 'ሪፖርቶች',

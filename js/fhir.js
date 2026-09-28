@@ -176,7 +176,7 @@ export function buildFHIRBundle(p, settings) {
   return {
     resourceType: 'Bundle', type: 'collection',
     timestamp: new Date().toISOString(),
-    meta: { tag: [{ system: 'urn:parthograph', code: 'parthograph-export' }] },
+    meta: { tag: [{ system: 'urn:labour-care-guide', code: 'lcg-export' }] },
     entry: entries,
   };
 }
@@ -194,7 +194,7 @@ export function downloadFHIR(p, settings) {
   const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/fhir+json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `parthograph-fhir-${(p.name || 'case').replace(/\s+/g, '_')}-${p.id}.json`;
+  a.download = `lcg-fhir-${p.id}.json`; // no patient name in the filename
   a.click();
   URL.revokeObjectURL(a.href);
 }

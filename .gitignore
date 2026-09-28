@@ -4,3 +4,7 @@ node_modules/
 Thumbs.db
 backups/
 *.bak
+# local-only working material (WHO source PDFs, drafts, session launch prompt)
+_sources/
+_drafts/
+LAUNCH PROMPT*
