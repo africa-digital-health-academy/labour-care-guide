@@ -23,7 +23,7 @@ export async function seedDemoPatient() {
     },
     status: 'active', activeStartTime: hrs(5), secondStageStart: null,
     obs: [], meds: [], alerts: [], notes: [],
-    protocolOverride: null, oxytocinRunning: false, referral: null, delivery: null, newborn: null,
+    protocolId: proto.id, protocolOverride: null, oxytocinRunning: false, referral: null, delivery: null, newborn: null,
   };
 
   const add = (hAgo, type, v) => {

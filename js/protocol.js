@@ -64,7 +64,11 @@ export const LIMITS = {
 };
 
 export function getProtocol(settings, patient) {
-  const id = (patient && patient.protocolOverride) || (settings && settings.protocol) || 'lcg';
+  // protocolId is stamped once at admission (or inferred by migration) so a
+  // later Settings change never retroactively changes a case already in
+  // progress (S2); protocolOverride is kept as a legacy fallback.
+  const id = (patient && (patient.protocolId || patient.protocolOverride))
+    || (settings && settings.protocol) || 'lcg';
   return PROTOCOLS[id] || PROTOCOLS.lcg;
 }
 

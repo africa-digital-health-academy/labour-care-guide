@@ -19,7 +19,7 @@ const SHELL = [
   './css/app.css',
   './icons/icon.svg', './icons/icon-maskable.svg',
   './js/version.js',
-  './js/app.js', './js/store.js', './js/db.js', './js/ui.js', './js/i18n.js',
+  './js/app.js', './js/store.js', './js/db.js', './js/migrate.js', './js/ui.js', './js/i18n.js',
   './js/ethiopic.js', './js/protocol.js', './js/alerts.js', './js/wizard.js',
   './js/chart.js', './js/fhir.js', './js/demo.js',
   './js/views/dashboard.js', './js/views/admission.js', './js/views/patient.js',

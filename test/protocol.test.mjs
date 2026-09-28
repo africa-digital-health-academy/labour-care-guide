@@ -35,3 +35,15 @@ test('ethiopia2021: active phase at 4 cm and alert/action line geometry', () => 
 test('unknown protocol id falls back to LCG', () => {
   assert.equal(getProtocol({ protocol: 'nope' }, mkPatient()).id, 'lcg');
 });
+
+test('getProtocol prefers patient.protocolId over the live settings.protocol (S2: a later Settings change must not retroactively change a case already in progress)', () => {
+  const settings = { protocol: 'ethiopia2021' };
+  const p = mkPatient({ protocolId: 'lcg' });
+  assert.equal(getProtocol(settings, p).id, 'lcg');
+});
+
+test('getProtocol falls back to protocolOverride when protocolId is absent, then to settings.protocol', () => {
+  const settings = { protocol: 'ethiopia2021' };
+  assert.equal(getProtocol(settings, mkPatient({ protocolOverride: 'lcg' })).id, 'lcg');
+  assert.equal(getProtocol(settings, mkPatient()).id, 'ethiopia2021');
+});

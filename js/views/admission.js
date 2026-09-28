@@ -177,7 +177,7 @@ export function renderAdmission() {
       activeStartTime: m.dilatation >= proto.activeStartCm ? admTime : null,
       secondStageStart: m.dilatation >= 10 ? admTime : null,
       obs: [], meds: [], alerts: [], notes: [],
-      protocolOverride: null, oxytocinRunning: false,
+      protocolId: proto.id, protocolOverride: null, oxytocinRunning: false,
       referral: null, delivery: null, newborn: null,
     };
     if (m.dilatation >= 10) p.status = 'second';
