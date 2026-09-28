@@ -1,10 +1,25 @@
-// views/settings.js — facility configuration, protocol selection, language,
-// and the about/disclaimer section.
+// views/settings.js - facility configuration, protocol selection, language,
+// update check, sound test, and the about/disclaimer section.
 
-import { h, field, segmented, toast, confirmDialog } from '../ui.js';
+import '../version.js';
+import { h, field, segmented, toast, beep } from '../ui.js';
 import { S, saveSettings } from '../store.js';
 import { PROTOCOLS } from '../protocol.js';
 import { seedDemoPatient } from '../demo.js';
+
+const REPO_URL = 'https://github.com/DrTemesgen/labour-care-guide';
+
+async function checkForUpdates() {
+  if (!('serviceWorker' in navigator)) { toast('Updates need the installed (https) version.'); return; }
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) { toast('No offline installation registered yet.'); return; }
+    await reg.update();
+    toast('Checked. If a new version exists, an "Update ready" chip appears in the top bar.');
+  } catch {
+    toast('Could not check now (offline?).', 'danger');
+  }
+}
 
 export function renderSettings() {
   const s = { ...S.settings };
@@ -22,16 +37,16 @@ export function renderSettings() {
     ),
     h('div', { class: 'card' },
       h('h2', null, '📋 Clinical protocol'),
-      field('Partograph standard', segmented([
-        { value: 'lcg', label: 'WHO LCG 2020' },
-        { value: 'ethiopia2021', label: 'Modified partograph (MOH 2021)' },
+      field('Labour monitoring standard', segmented([
+        { value: 'lcg', label: 'WHO Labour Care Guide (2020)' },
+        { value: 'ethiopia2021', label: 'Modified partograph (MOH 2021, legacy)' },
       ], s.protocol, v => { s.protocol = v; })),
       h('p', { class: 'muted' },
         s.protocol === 'lcg'
-          ? PROTOCOLS.lcg.name + ': active phase from 5 cm; per-centimetre time limits (5→6 h, 6→5 h, 7→3 h, 8→2.5 h, 9→2 h) replace the alert/action lines.'
-          : PROTOCOLS.ethiopia2021.name + ': active phase from 4 cm; alert line 1 cm/h with action line 4 h to the right, per the MOH Obstetrics Management Protocol for Health Centers (2021).'),
+          ? PROTOCOLS.lcg.name + ': active phase from 5 cm; per-centimetre time limits (5 cm 6 h, 6 cm 5 h, 7 cm 3 h, 8 cm 2.5 h, 9 cm 2 h) replace the alert/action lines.'
+          : PROTOCOLS.ethiopia2021.name + ': active phase from 4 cm; alert line 1 cm/h with action line 4 h to the right, per the MOH Obstetrics Management Protocol for Health Centers (2021). Kept for facilities still audited on it.'),
       h('p', { class: 'muted' },
-        '⚠ Use the standard your facility is audited against. Existing cases keep the protocol they were started with.'),
+        'Use the standard your facility is audited against. Note: in this version, changing the standard applies to every case on this device; per-case protocol arrives in the next release.'),
     ),
     h('div', { class: 'card' },
       h('h2', null, '🌐 Display'),
@@ -44,10 +59,13 @@ export function renderSettings() {
       field('Sound alerts', segmented([
         { value: true, label: 'On' }, { value: false, label: 'Off' },
       ], s.sound, v => { s.sound = v; })),
+      h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:8px' },
+        h('button', { class: 'btn secondary', onclick: () => beep('danger') }, 'Test sound'),
+      ),
     ),
     h('button', {
-      class: 'btn big', onclick: async () => { await saveSettings(s); toast('Settings saved ✓'); },
-    }, '✓ Save settings'),
+      class: 'btn big', onclick: async () => { await saveSettings(s); toast('Settings saved'); },
+    }, 'Save settings'),
 
     h('div', { class: 'card', style: 'margin-top:14px' },
       h('h2', null, '🧪 Training'),
@@ -56,11 +74,16 @@ export function renderSettings() {
     ),
 
     h('div', { class: 'card' },
-      h('h2', null, 'ℹ About Parthograph'),
-      h('p', null, 'Open-source digital partograph / WHO Labour Care Guide for midwives in resource-limited settings (customized for Ethiopia first). Offline-first: all data stays on this device.'),
+      h('h2', null, 'About Labour Care Guide'),
+      h('p', null, 'Version ' + self.LCG_VERSION),
+      h('p', null, 'Open-source, offline-first digital implementation of the WHO Labour Care Guide (2020) for midwives in resource-limited settings. All data stays on this device.'),
+      h('p', { class: 'muted' }, 'This is not a WHO product and is not endorsed by WHO. Thresholds and codes follow the WHO Labour Care Guide user\'s manual; see NOTICE-WHO.md in the source repository.'),
       h('p', { class: 'muted', style: 'border-left:4px solid var(--c-warn);padding-left:10px' },
         'DISCLAIMER: This software is a decision-support and documentation aid for skilled birth attendants. It is not a certified medical device and does not replace clinical judgement, national protocols, or senior consultation. Pilot use must be approved by the responsible health authorities.'),
-      h('p', { class: 'muted' }, 'Source & documentation: github.com — see README. Licensed MIT.'),
+      h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin:8px 0' },
+        h('button', { class: 'btn secondary', onclick: checkForUpdates }, 'Check for updates'),
+      ),
+      h('p', { class: 'muted' }, 'Source and documentation: ', h('a', { href: REPO_URL, target: '_blank', rel: 'noopener noreferrer' }, REPO_URL), '. Licensed MIT.'),
     ),
   );
 }

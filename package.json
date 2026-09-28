@@ -1,0 +1,15 @@
+{
+  "name": "labour-care-guide",
+  "version": "2.0.0-dev",
+  "description": "Offline-first digital implementation of the WHO Labour Care Guide (2020) for midwives in resource-limited settings",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "start": "python -m http.server 8080"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

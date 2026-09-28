@@ -1,4 +1,4 @@
-/* Parthograph — tablet-first stylesheet
+/* Labour Care Guide - tablet-first stylesheet
    Design goals: large touch targets (min 48px), high contrast for bright wards,
    readable at arm's length, minimal typing, print-friendly referral notes. */
 
@@ -271,3 +271,9 @@ table.entries th { color: var(--c-ink-soft); font-size: .8rem; }
   .print-only { display: block !important; }
 }
 .print-only { display: none; }
+
+/* ---- v2 additions ---- */
+/* Update-ready chip in the top bar (a new release is downloaded and waiting). */
+.update-chip { background: var(--c-accent); color: var(--c-ink); border: 0; border-radius: 999px; padding: 6px 12px; font-weight: 700; font-size: .85rem; margin-right: 8px; min-height: 36px; }
+/* Stepper showing a previous value that has NOT been committed yet. */
+.stepper .val.hint { color: var(--c-ink-soft); font-weight: 500; }

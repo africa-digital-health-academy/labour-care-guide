@@ -1,101 +1,104 @@
-# 🤰 Parthograph — Digital Labour Care for Resource-Limited Settings
+# Labour Care Guide - digital, offline-first
 
-**An offline-first, tablet-based digital partograph / WHO Labour Care Guide (2020) for midwives — with a guided entry wizard, automatic chart drawing, clinical alerts, referral decision support, APGAR scoring, and FHIR R4 export.**
+**An open-source, offline-first tablet implementation of the WHO Labour Care Guide (2020) for midwives in resource-limited settings: guided entry, an auto-drawn labour chart, clinical alerts, referral support, birth record and FHIR export.**
 
-> ⚠️ **Disclaimer:** Parthograph is a decision-support and documentation aid for skilled birth attendants. It is **not a certified medical device** and does not replace clinical judgement, national protocols, or senior consultation. Facility use requires approval by the responsible health authorities and supervised piloting.
+This repository is **version 2** of the project first published as [parthograph](https://github.com/DrTemesgen/parthograph) (June 2026). It was started from the v1 tree after a full audit against the current WHO document set. The audit and its verdict are in [docs/WHO_ALIGNMENT_2026.md](docs/WHO_ALIGNMENT_2026.md); the improvements this rebuild proposes to WHO itself are in [docs/SUGGESTIONS_TO_WHO.md](docs/SUGGESTIONS_TO_WHO.md).
 
----
+> **Status (September 2026): version 2 is in development.** The v1 application remains live at https://drtemesgen.github.io/parthograph/ and keeps working on installed tablets. The v2 application will be published from this repository when the clinical engine, chart and reports have passed their tests and review (milestone M6 below).
 
-## Why
+> **Disclaimer.** This software is a decision-support and documentation aid for skilled birth attendants. It is **not a certified medical device** and does not replace clinical judgement, national protocols, or senior consultation. It is not a WHO product and is not endorsed by WHO (see [NOTICE-WHO.md](NOTICE-WHO.md)). Facility use requires approval by the responsible health authorities and supervised piloting.
 
-In resource-limited settings, partograph use is chronically low. In Ethiopia — the first deployment context — pooled utilization is only **~55–60%** across studies, and in the 2016 national EmONC census only **21.5%** of partographs met the WHO standard for complete recording. The strongest known drivers of proper use are refresher training (OR 5.7), form availability, supportive supervision, and being a midwife at a **health centre**. Meanwhile, field trials of electronic partographs (Jhpiego ePartogram in Kenya, mLabour in Tanzania, DAKSH in India) show that timed reminders, automatic graphing and threshold alerts improve observation compliance and even fetal outcomes — *if* the tool respects a busy midwife's reality.
+## Why a version 2
 
-There is currently **no maintained, licensed, open-source implementation of the WHO Labour Care Guide 2020** anywhere on GitHub (verified June 2026). Parthograph aims to fill that gap — built for **resource-limited settings**, and customized for Ethiopian health centres as its first deployment.
+The WHO Labour Care Guide form and user's manual have not changed since 2020, and the v1 engine matches every threshold on the form. What changed is the guidance around it and what a digital tool is expected to do:
 
-## What it does
+- **WHO labour care guide: implementation resource package (September 2025)** - a facility indicator set (LCG completed, FHR and BP on admission, companion of choice, caesarean rate by Robson group, institutional stillbirths), a clinical audit tool, and a five-level maturity model. Ethiopia was one of its seven pilot countries.
+- **WHO/FIGO/ICM consolidated postpartum haemorrhage guidelines (October 2025)** - a new action trigger (300 mL with abnormal signs, or 500 mL), calibrated-drape measurement and the MOTIVE first-response bundle.
+- Fourteen fidelity gaps against the form itself (declined codes, the pushing marker, initials, labour onset, parity-specific limits, sheet continuation) and thirteen safety-grade defects found by two independent code reviews of v1.
+
+## What v2 delivers (programme)
+
+| Milestone | Content | Status |
+|---|---|---|
+| M0 | New repository, WHO alignment audit, suggestions to WHO, release plumbing (single version constant, atomic offline updates with an "Update ready" chip, alarm unlock, screen wake lock, persistent storage), Node test suite | done |
+| M1 | Schema v2 with migration, per-case protocol, restore that never overwrites newer data | planned |
+| M2 | Clinical engine to the WHO standard: declined codes, pushing marker, parity-specific limits, alert lifecycle (recurrence re-alerts), append-only corrections, PPH 2025 trigger and bundle, postpartum watch, audit score, indicators | planned |
+| M3 | Safe rendering (forms are never wiped by background refresh), admission that records only what was entered, initials per entry, correction flows | planned |
+| M4 | Chart and print that mirror the WHO sheet (12-hour sheet with continuation, second-stage panel, descent row, alert circles), facility reports with the six WHO indicators | planned |
+| M5 | FHIR fixes, Amharic coverage, documentation | planned |
+| M6 | Verification walk, review, publication of the v2 app | planned |
+
+The full gap register (F1-F14, N1-N5, S1-S13) is in the audit document.
+
+## What it does today (v1 feature set, carried over)
 
 | Feature | Detail |
 |---|---|
-| **Guided wizard** | One large-format question per screen (numpad / big buttons). The midwife answers; the partograph draws itself. Entries can be back-timed up to 60 min — no punishing lock-outs. |
-| **Dual protocol engine** | **WHO LCG 2020** (active phase from 5 cm, per-cm time limits: 5→6h, 6→5h, 7→3h, 8→2.5h, 9→2h) **or** the **Ethiopian modified WHO partograph** (MOH 2021: 4 cm, alert line 1 cm/h, action line +4 h). Switch in Settings to match what your facility is audited against. |
-| **Smart schedule timers** | FHR & contractions q30min (q5/q15min in 2nd stage), vitals & exam q4h, supportive care hourly, oxytocin checks q30min — due/overdue chips per woman, with sound. |
-| **Multi-patient ward board** | Sorted by urgency: who needs me *right now*. Built for one midwife covering several labours at night. |
-| **Clinical alert engine** | WHO LCG thresholds for FHR, decelerations, liquor, contractions, BP, temperature, pulse, urine, moulding/caput, progress, 2nd-stage duration, prolonged ROM — tiered (review vs ACT NOW), de-duplicated against alert fatigue, every alert acknowledged with a recorded decision (shared decision-making). |
-| **Referral decision support** | Reasons pre-selected from active alerts; **pre-referral bundle checklist** (IV line, MgSO₄ loading dose for severe pre-eclampsia, first-dose antibiotics, call-ahead, ambulance, escort); printable + shareable referral note. Only ~16% of severe pre-eclampsia referrals in Ethiopia currently get MgSO₄ before transport — the checklist makes the bundle explicit. |
-| **Emergency cards** | Eclampsia, cord prolapse, APH, shoulder dystocia, uterine rupture, PPH — immediate health-centre actions, one tap to record and open referral. |
-| **Birth record & APGAR** | Guided APGAR 1′/5′/10′ scoring (auto-summed, colour-coded), essential newborn care checklist, AMTSL/third stage, EBL with PPH alert. |
-| **Reports** | Monthly facility indicators aligned with HMIS/DHIS2 delivery-care reporting; CSV birth register export; full JSON backup/restore. |
-| **FHIR R4 export** | One Bundle per case — Patient, Encounter, Observations (verified LOINC/SNOMED codes), MedicationAdministration, Flags, ServiceRequest — ready for future EMR/HIE integration (OpenMRS/Bahmni lineage). See [docs/FHIR_MAPPING.md](docs/FHIR_MAPPING.md). |
-| **Ethiopian calendar** | Ge'ez (Amete Mihret) date shown alongside Gregorian. Amharic UI strings (draft) with English clinical content, matching Ethiopian clinical training. |
-| **Offline-first** | 100% client-side: IndexedDB storage + service worker. No server, no account, no connectivity needed. Installable as a PWA on Android tablets. |
+| Guided wizard | One large-format question per screen (numpad / big buttons). Entries can be back-timed up to 60 min; no lock-outs. |
+| Dual protocol engine | WHO LCG 2020 (active phase from 5 cm, per-centimetre time limits) or the Ethiopian modified partograph (MOH 2021, alert/action lines), kept as a legacy option. |
+| Schedule timers | FHR and contractions every 30 min (every 5/15 min in the second stage), vitals and examination every 4 h, supportive care hourly; due/overdue chips per woman, with sound. |
+| Ward board | Every woman in labour sorted by urgency, built for one midwife covering several labours at night. |
+| Alert engine | WHO LCG thresholds for FHR, decelerations, liquor, contractions, BP, temperature, pulse, urine, moulding/caput, progress, second-stage duration and prolonged rupture of membranes; tiered (review vs act now); every alert acknowledged with a recorded decision. |
+| Referral support | Reasons pre-selected from active alerts; pre-referral bundle checklist (IV line, MgSO4 loading dose, first-dose antibiotics, call-ahead, transport); printable and shareable note. |
+| Emergency cards | Eclampsia, cord prolapse, APH, shoulder dystocia, uterine rupture, PPH. |
+| Birth record | APGAR 1/5/10, essential newborn care checklist, third stage, blood loss with PPH alert. |
+| Reports | Monthly facility indicators, CSV birth register, JSON backup and restore. |
+| FHIR R4 export | One Bundle per case (Patient, Encounter, Observations with LOINC/SNOMED codes, MedicationAdministration, Flags, ServiceRequest). See [docs/FHIR_MAPPING.md](docs/FHIR_MAPPING.md). |
+| Ethiopian calendar | Ge'ez date beside the Gregorian date; draft Amharic interface strings. |
+| Offline-first | 100 percent client-side: IndexedDB plus a service worker. Installable as a PWA on Android tablets. |
 
 ## Quick start
 
-It's a static web app — no build step, no dependencies.
+No build step, no dependencies.
 
 ```bash
-# any static file server works:
-npx http-server .          # or: python -m http.server
-# open http://localhost:8080 — then Settings → load a demo case
+python -m http.server 8080      # or: npx http-server .
+# open http://localhost:8080 - then Settings > Load a demo labour case
 ```
 
-**Install on a tablet:** open the hosted URL in Chrome on Android → menu → *Add to Home screen*. The app then works fully offline.
+```bash
+npm test                        # Node 20+; runs the test suite in test/
+```
 
-**Host it free on GitHub Pages:** repository → Settings → Pages → deploy from `main` branch root. Done — every tablet in the facility installs from that URL.
+Install on a tablet: open the hosted URL in Chrome on Android, menu, "Add to Home screen". The app then works fully offline and shows an "Update ready" chip in the top bar when a new release has been downloaded.
 
 ## Project structure
 
 ```
 index.html            app shell (PWA)
-sw.js                 service worker (offline cache)
-css/app.css           tablet-first styles (48px+ touch targets, print styles)
+sw.js                 service worker: versioned, atomic offline shell
 js/
-  protocol.js         ⭐ clinical engine: both protocols, schedules, thresholds
-  alerts.js           ⭐ alert rules (obs-triggered + time-triggered), emergencies
+  version.js          the single version constant (cache key + About screen)
+  protocol.js         clinical engine: protocols, schedules, thresholds
+  alerts.js           alert rules (observation- and time-triggered), emergencies
   wizard.js           guided entry flow, alert acknowledgement, medications
-  chart.js            SVG partograph renderer (auto-drawn)
+  chart.js            SVG chart renderer
   ethiopic.js         Ethiopian calendar conversion (tested)
-  fhir.js             FHIR R4 Bundle export (LOINC/SNOMED coded)
+  fhir.js             FHIR R4 Bundle export
   db.js / store.js    IndexedDB persistence, backup/restore
   i18n.js             English + draft Amharic strings
   views/              dashboard, admission, patient, delivery, referral, reports, settings
-test/smoke.mjs        logic tests — run: node test/smoke.mjs
-docs/                 design, research evidence, FHIR mapping, roadmap
+test/                 node:test suite (npm test)
+docs/                 WHO alignment audit, suggestions to WHO, design, research, FHIR mapping, roadmap
 ```
 
-All clinical thresholds live in `js/protocol.js` and `js/alerts.js` — **never in UI code** — so they can be reviewed by clinicians and updated when national guidance changes (a hard lesson from field trials where embedded rules went stale).
+All clinical thresholds live in `js/protocol.js` and `js/alerts.js`, never in view code, so they can be reviewed by clinicians and updated when national guidance changes.
 
-## Evidence base & design rationale
+## Evidence base
 
-The design synthesizes:
-- **WHO Labour Care Guide (2020)** + User's Manual — all thresholds and monitoring frequencies
-- **Ethiopian MOH Obstetrics Management Protocol for Health Centers (2021)** — modified partograph, referral indications, BEmONC scope
-- Field lessons from **Jhpiego ePartogram** (Kenya/Zanzibar), **PartoMa** (Zanzibar/Ethiopia), **mLabour** (Tanzania), **DAKSH** (India)
-- Ethiopian partograph-compliance literature and the **Digital Health Blueprint 2021–2030**
+- WHO Labour Care Guide (2020) and its user's manual: all thresholds and monitoring frequencies.
+- WHO labour care guide: implementation resource package (2025): indicators, audit tool, maturity model.
+- WHO/FIGO/ICM consolidated guidelines on postpartum haemorrhage (2025).
+- WHO recommendations: intrapartum care for a positive childbirth experience (2018).
+- Ethiopian MOH Obstetrics Management Protocol for Health Centers (2021), for the legacy modified partograph.
+- Field lessons from ePartogram (Kenya, Zanzibar), PartoMa (Zanzibar, Ethiopia), mLabour (Tanzania) and DAKSH (India): see [docs/RESEARCH.md](docs/RESEARCH.md).
 
-See [docs/RESEARCH.md](docs/RESEARCH.md) for the full annotated evidence brief and [docs/DESIGN.md](docs/DESIGN.md) for architecture decisions.
+## Get involved
 
-## Roadmap (see [docs/ROADMAP.md](docs/ROADMAP.md))
+This project is looking for clinical reviewers (obstetrics, midwifery), translators (Amharic, Afaan Oromo, Tigrinya, Somali, Afar), pilot facilities and digital-health implementers. Clinical-content changes require a citation (WHO or MOH document and page). Comments on the suggestions to WHO are welcome as issues on this repository.
 
-1. Clinical review of thresholds & Amharic translation review (Ethiopian midwifery/OBGYN input)
-2. Afaan Oromo, Tigrinya, Somali, Afar localization
-3. Optional sync server + supervisor dashboard (facility/woreda mentorship view)
-4. DHIS2 aggregate push; OpenMRS/Bahmni FHIR integration pilot
-5. Alignment with a future WHO SMART Guidelines intrapartum DAK (none exists yet — this project could inform it)
-6. Field usability study at pilot health centres (with MOH digital-health governance registration)
+Contact: Dr Temesgen Endalew - [linkedin.com/in/dr-temesgen-endalew](https://www.linkedin.com/in/dr-temesgen-endalew/)
 
-## Get involved / implementation support
+## Licence
 
-📣 **This project is looking for collaborators and pilot partners.** If you are a health facility, ministry, NGO, researcher, midwife, obstetrician, or developer interested in **piloting, adapting, translating, or supporting the implementation** of Parthograph in your setting — Ethiopia or any resource-limited context — please reach out:
-
-**Dr Temesgen Endalew** — [linkedin.com/in/dr-temesgen-endalew](https://www.linkedin.com/in/dr-temesgen-endalew/)
-
-Help is especially welcome with: clinical review of the alert thresholds, Amharic / Afaan Oromo / Tigrinya / Somali / Afar translation, field usability testing, and integration with national systems (DHIS2, OpenMRS/Bahmni).
-
-## Contributing
-
-Issues and PRs welcome — especially from Ethiopian midwives, obstetricians, and digital-health implementers. Clinical-content changes require a citation (WHO/MOH document + page).
-
-## License
-
-[MIT](LICENSE) — free to use, adapt and deploy. Every existing partograph repo we surveyed was unlicensed and therefore legally unusable; this one is deliberately open.
+Code: [MIT](LICENSE). WHO-derived content is used under the WHO CC BY-NC-SA 3.0 IGO licence with attribution; see [NOTICE-WHO.md](NOTICE-WHO.md).

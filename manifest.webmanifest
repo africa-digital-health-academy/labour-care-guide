@@ -1,7 +1,7 @@
 {
-  "name": "Parthograph — Digital Labour Care",
-  "short_name": "Parthograph",
-  "description": "Offline-first digital partograph / WHO Labour Care Guide for midwives in resource-limited settings",
+  "name": "Labour Care Guide - digital",
+  "short_name": "LCG",
+  "description": "Offline-first digital implementation of the WHO Labour Care Guide for midwives in resource-limited settings",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

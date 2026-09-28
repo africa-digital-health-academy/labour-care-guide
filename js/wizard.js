@@ -96,12 +96,12 @@ const STEPS = {
   exam: patient => [
     {
       key: 'dilatation', q: 'Cervical dilatation (cm)?', required: true,
-      render: (v, on) => stepper(v != null ? v : lastExamValue(patient, 'dilatation'), on, { min: 0, max: 10, unit: 'cm' }),
+      render: (v, on) => stepper(v, on, { min: 0, max: 10, unit: 'cm', hint: lastExamValue(patient, 'dilatation') }),
     },
     {
       key: 'descent', q: 'Descent — fifths of head palpable above brim?',
       help: '5/5 = floating, 0/5 = fully engaged/on pelvic floor.',
-      render: (v, on) => stepper(v != null ? v : lastExamValue(patient, 'descent'), on, { min: 0, max: 5, unit: '/5' }),
+      render: (v, on) => stepper(v, on, { min: 0, max: 5, unit: '/5', hint: lastExamValue(patient, 'descent') }),
     },
     {
       key: 'presentation', q: 'Presentation?', dflt: 'cephalic',

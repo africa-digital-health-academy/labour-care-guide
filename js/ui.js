@@ -1,4 +1,4 @@
-// ui.js — tiny DOM toolkit (no framework: keeps the app dependency-free,
+// ui.js - tiny DOM toolkit (no framework: keeps the app dependency-free,
 // auditable, and runnable from any static file host).
 
 export function h(tag, attrs, ...children) {
@@ -72,11 +72,32 @@ export function toast(msg, kind = '') {
 }
 
 // ---------------------------------------------------------------- sound ----
+// Browsers only allow audio that was "unlocked" by a user gesture. The app
+// calls unlockAudio() on the first tap or key press after every load; an alarm
+// that fires before that falls back to vibration (where the device has it).
 
 let audioCtx = null;
-export function beep(kind = 'due') {
+
+export function unlockAudio() {
   try {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    audioCtx = audioCtx || new Ctx();
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  } catch { /* audio unavailable - visual alerts still work */ }
+}
+
+function vibrate(kind) {
+  try {
+    if (navigator.vibrate) navigator.vibrate(kind === 'danger' ? [220, 100, 220, 100, 440] : [140, 80, 140]);
+  } catch { /* ignore */ }
+}
+
+export function beep(kind = 'due') {
+  if (kind === 'danger') vibrate(kind);
+  try {
+    unlockAudio();
+    if (!audioCtx || audioCtx.state !== 'running') { if (kind !== 'danger') vibrate(kind); return; }
     const seq = kind === 'danger' ? [[880, 0.18], [660, 0.18], [880, 0.18], [660, 0.18]] : [[740, 0.15], [740, 0.15]];
     let t = audioCtx.currentTime;
     for (const [freq, dur] of seq) {
@@ -89,7 +110,7 @@ export function beep(kind = 'due') {
       o.start(t); o.stop(t + dur);
       t += dur + 0.08;
     }
-  } catch { /* audio unavailable — visual alerts still work */ }
+  } catch { vibrate(kind); }
 }
 
 // ----------------------------------------------------------- formatting ----
@@ -110,7 +131,7 @@ function eatParts(d) {
   return { y: g('year'), mo: g('month'), d: g('day'), hh, mi: g('minute') };
 }
 
-/** A Date whose LOCAL y/m/d equal the Addis-Ababa date — for calendar conversion. */
+/** A Date whose LOCAL y/m/d equal the Addis-Ababa date - for calendar conversion. */
 export function eatDate(d = new Date()) {
   const p = eatParts(d);
   return new Date(+p.y, +p.mo - 1, +p.d);
@@ -140,7 +161,7 @@ export function durationSince(iso, now = new Date()) {
   return hf ? `${hf} h ${min % 60} min` : `${min} min`;
 }
 
-/** "X minutes ago" time picker value → ISO string. */
+/** "X minutes ago" time picker value -> ISO string. */
 export function minutesAgoISO(min) {
   return new Date(Date.now() - min * 60000).toISOString();
 }
@@ -201,16 +222,45 @@ export function numpad(initial, onChange, { decimal = false, maxLen = 5, unit = 
   return h('div', null, display, pad);
 }
 
-/** +/- stepper for small integer ranges. */
-export function stepper(initial, onChange, { min = 0, max = 10, unit = '' } = {}) {
+/**
+ * Pure stepper logic (unit-tested in Node). `val == null` means nothing has
+ * been entered yet. The first tap on an empty field commits `start` (the
+ * greyed previous value, when one is shown); without a start value "+" begins
+ * at `min` and "-" does nothing. (v1 jumped to `max` on "-", which produced
+ * false tachysystole and descent readings.)
+ */
+export function stepperNext(val, d, { min = 0, max = 10, start = null } = {}) {
+  const clamp = n => Math.min(max, Math.max(min, n));
+  if (val == null) {
+    if (start != null) return clamp(start);
+    return d > 0 ? min : null;
+  }
+  return clamp(val + d);
+}
+
+/**
+ * +/- stepper for small integer ranges. `hint` shows a previous value greyed
+ * out; it is NOT committed until the user taps a button, so an unchanged
+ * screen never records a value nobody entered.
+ */
+export function stepper(initial, onChange, { min = 0, max = 10, unit = '', hint = null } = {}) {
   let val = initial != null ? initial : null;
   const valEl = h('div', { class: 'val' });
-  const update = () => { valEl.textContent = val == null ? '—' : val + (unit ? ' ' + unit : ''); onChange(val); };
+  const paint = () => {
+    const shown = val != null ? val : hint;
+    valEl.textContent = shown == null ? '—' : shown + (unit ? ' ' + unit : '');
+    valEl.classList.toggle('hint', val == null && hint != null);
+  };
   const btn = (label, d) => h('button', {
     type: 'button',
-    onclick: () => { val = val == null ? (d > 0 ? min : max) : Math.min(max, Math.max(min, val + d)); update(); },
+    onclick: () => {
+      const next = stepperNext(val, d, { min, max, start: hint });
+      if (next === val) return;
+      val = next; paint(); onChange(val);
+    },
   }, label);
-  update();
+  paint();
+  onChange(val);
   return h('div', { class: 'stepper' }, btn('−', -1), valEl, btn('+', +1));
 }
 

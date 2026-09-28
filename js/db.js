@@ -1,7 +1,7 @@
 // db.js — IndexedDB persistence layer (offline-first, no server required).
 // Stores: patients (one document per labour case), settings (singleton).
 
-const DB_NAME = 'parthograph';
+const DB_NAME = 'labour-care-guide';
 const DB_VERSION = 1;
 let dbPromise = null;
 
@@ -82,7 +82,7 @@ export async function exportBackup() {
   const patients = await getAllPatients();
   const settings = await getSettings();
   return {
-    app: 'parthograph',
+    app: 'labour-care-guide',
     schema: DB_VERSION,
     exportedAt: new Date().toISOString(),
     settings,
@@ -91,8 +91,8 @@ export async function exportBackup() {
 }
 
 export async function importBackup(data) {
-  if (!data || data.app !== 'parthograph' || !Array.isArray(data.patients)) {
-    throw new Error('Not a valid Parthograph backup file');
+  if (!data || !['labour-care-guide', 'parthograph'].includes(data.app) || !Array.isArray(data.patients)) {
+    throw new Error('Not a valid Labour Care Guide (or Parthograph v1) backup file');
   }
   for (const p of data.patients) await putPatient(p);
   if (data.settings) {
