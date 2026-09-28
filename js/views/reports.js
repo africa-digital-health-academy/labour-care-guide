@@ -3,7 +3,7 @@
 // the duplicate-reporting burden that field studies flag as the top
 // complaint about digital tools.
 
-import { h, toast, fmtDT } from '../ui.js';
+import { h, toast, fmtDT, confirmDialog } from '../ui.js';
 import { S, exportBackup, importBackup, initStore, emit } from '../store.js';
 
 export function renderReports() {
@@ -89,11 +89,16 @@ function restore() {
   input.accept = 'application/json';
   input.onchange = async () => {
     try {
-      const text = await input.files[0].text();
-      const n = await importBackup(JSON.parse(text));
+      const data = JSON.parse(await input.files[0].text());
+      const preview = await importBackup(data, { dryRun: true });
+      const summary = `${preview.added} new, ${preview.updated} updated, ${preview.skipped} unchanged (kept local). `
+        + 'A safety snapshot of what is on this device is taken first.';
+      const ok = await confirmDialog(summary, { okLabel: 'Restore' });
+      if (!ok) return;
+      const result = await importBackup(data);
       await initStore();
       emit();
-      toast(`Restored ${n} case(s) ✓`);
+      toast(`Restored: ${result.added} new, ${result.updated} updated, ${result.skipped} unchanged ✓`);
     } catch (e) {
       toast('Restore failed: ' + e.message, 'danger');
     }

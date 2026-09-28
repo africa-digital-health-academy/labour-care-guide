@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.0-dev (unreleased) - milestone M1, 28 September 2026
+
+- Stored case records now carry a schema version (`schemaVersion`); a pure, idempotent
+  migration (`js/migrate.js`) brings every older record forward on load or on restore,
+  add-only so nothing already on a device is renamed or removed.
+- Each case now remembers which protocol it was admitted under (`protocolId`), fixing a
+  defect where changing the Settings protocol switch used to change the standard applied
+  to women already in labour. `protocolOverride` is kept as a legacy fallback.
+- A `backups` object store takes an automatic snapshot before a schema migration writes
+  anything, and again before a restore overwrites anything - in addition to the manual
+  JSON backup file, never a replacement for it.
+- Restore now previews a dry-run merge (new / updated / unchanged counts) and asks for
+  confirmation before writing; newer record wins by `updatedAt`, a tie keeps the local
+  record.
+- Fields laid down for later milestones, not yet surfaced in the UI: per-entry author
+  (`by`), observation source (`admission` vs `entry`), alert `episode`, `deliveryHistory`,
+  `onsetMode`, `romUnknown`.
+
 ## 2.0.0-dev (unreleased) - milestone M0, 28 September 2026
 
 - New repository `labour-care-guide`, started from the Parthograph v1.3.0 tree (tag `v1.3.0-import`).
