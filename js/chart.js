@@ -5,8 +5,9 @@
 // woman, labour progress, medication, shared decision-making, initials - an
 // ALERT column written from FLAG / LIMITS, a 12-column active first stage and
 // a 3-hour second-stage panel. Values are written in the form's codes and any
-// value meeting the alert column is circled: red until the alert it raised is
-// acknowledged, then grey. X marks dilatation, O descent on its own grid
+// value meeting the alert column is circled: solid red until the alert it
+// raised is acknowledged after the entry, then dashed grey (flagState). X marks
+// dilatation, O descent on its own grid
 // (F14), P the start of pushing (F2); the assessment and plan rows carry the
 // notes (F13). An active first stage longer than 12 hours continues on
 // further sheets (F6); the second-stage panel belongs to the sheet in which
@@ -18,8 +19,8 @@
 //
 // chartSVG() is pure (no DOM) so it runs in the Node tests; renderChart() and
 // renderPrintSheets() wrap it for the page. Voided entries are never drawn
-// (S5), nothing is drawn after the birth, and every threshold comes from FLAG
-// and LIMITS (S13).
+// (S5), nothing is drawn after the birth minute (afterBirth), and every
+// threshold comes from FLAG and LIMITS (S13).
 
 import {
   getProtocol, timeReachedCurrentDilatation, alertLineAnchor, activeObs, byTime, toMs, LIMITS,
@@ -30,6 +31,7 @@ import { APP_TZ, eatDate } from './ui.js';
 import { formatEthiopic } from './ethiopic.js';
 
 const HOUR = 3600000;
+const MINUTE = 60000;
 export const SHEET_HOURS = 12; // the form: "if labour extends beyond 12h, continue on a new LCG" (F6)
 const SECOND_H = 3;            // the form's second-stage panel, in hours
 
@@ -98,17 +100,26 @@ function ackIndex(p) {
   return idx;
 }
 
-/** 'ack' when every alert the entry raised for these fields is acknowledged, else 'open'. */
+/**
+ * 'ack' when every alert the entry raised for these fields was acknowledged
+ * at or after the entry was made, else 'open'. A new entry re-opens an
+ * acknowledged alert (alerts.js addAlerts) and the alert keeps the time of
+ * its last acknowledgement, so the entries that acknowledgement covered stay
+ * grey and the later ones stay red until the alert is acknowledged again.
+ */
 function flagState(idx, o, fields) {
   const codes = [].concat(fields).flatMap(f => ALERT_CODES[f] || []);
   const raised = (idx.get(o.id) || []).filter(a => codes.includes(a.code));
-  return raised.length && raised.every(a => a.ack) ? 'ack' : 'open';
+  const made = toMs(o.enteredAt || o.time);
+  return raised.length && raised.every(a => a.actionTime && toMs(a.actionTime) >= made) ? 'ack' : 'open';
 }
 
+/** The circle: solid red while open, dashed grey once acknowledged (not by colour alone). */
 function ring(idx, o, fields, cx, cy, rx, ry) {
   const ack = flagState(idx, o, fields) === 'ack';
   return `<ellipse class="flag-circle${ack ? ' ack' : ''}"${idAttr(o.id)} cx="${n1(cx)}" cy="${n1(cy)}"`
-    + ` rx="${n1(rx)}" ry="${n1(ry)}" fill="none" stroke="${ack ? GREY : RED}" stroke-width="1.3"/>`;
+    + ` rx="${n1(rx)}" ry="${n1(ry)}" fill="none" stroke="${ack ? GREY : RED}" stroke-width="1.3"`
+    + `${ack ? ' stroke-dasharray="2 1.5"' : ''}/>`;
 }
 
 // ------------------------------------------------------------------ sheets ----
@@ -293,9 +304,16 @@ const cellAt = (P, t) => slotAt(P, t, P.cols * P.cells);
 const colAt = (P, t) => slotAt(P, t, P.cols);
 const cellX = (P, i) => P.x0 + (i + 0.5) * (P.x1 - P.x0) / (P.cols * P.cells);
 
+/**
+ * After the birth: from the minute after it. The birth time is entered to the
+ * minute, so an entry inside that minute (pushing began, then the birth) is
+ * not after it and is still charted.
+ */
+const afterBirth = (t, birth) => birth != null && t >= birth + MINUTE;
+
 /** The panel of this sheet that shows time t, or null (another sheet, or after the birth). */
 function panelFor(ctx, t) {
-  if (!Number.isFinite(t) || (ctx.birth != null && t > ctx.birth)) return null;
+  if (!Number.isFinite(t) || afterBirth(t, ctx.birth)) return null;
   if (ctx.active == null || t < ctx.active) return ctx.pre;
   if (ctx.second != null && t >= ctx.second) return ctx.sec.from == null ? null : ctx.sec;
   return sheetOf(t - ctx.active) === ctx.sheet ? ctx.first : null;
@@ -337,15 +355,33 @@ function meets(it, field, byFlag) {
   return it.o.flags.some(c => codes.includes(c));
 }
 
-/** One value per cell (manual Table 4: the most significant in the timeframe): flagged first, then the latest. */
+/**
+ * One value per cell (manual Table 4: the most significant in the timeframe):
+ * flagged first, then the latest. `merged` counts the values not shown.
+ */
 function perCell(list) {
-  const best = new Map();
+  const best = new Map(), count = new Map();
   for (const c of list) {
     const k = `${c.it.P.key}:${c.it.cell}`;
+    count.set(k, (count.get(k) || 0) + 1);
     const b = best.get(k);
     if (!b || c.rank > b.rank || (c.rank === b.rank && c.it.t >= b.it.t)) best.set(k, c);
   }
-  return [...best.values()];
+  return [...best].map(([k, c]) => ({ ...c, merged: count.get(k) - 1 }));
+}
+
+/**
+ * "+n" in the top-right corner of a latent / admission cell holding n more
+ * values than the one shown: that panel squeezes the whole latent phase into
+ * a few columns, so it merges far more than the form's own cells do.
+ */
+function mergedMark(c, top) {
+  const P = c.it.P;
+  if (P.key !== 'pre' || !c.merged) return '';
+  const cw = (P.x1 - P.x0) / (P.cols * P.cells);
+  // in the strip above the value's glyphs, so it never sits on the value
+  return txt(cellX(P, c.it.cell) + cw / 2 - 0.6, top + 3.7, `+${c.merged}`,
+    { size: 4.4, anchor: 'end', weight: 700, fill: MUTED, cls: 'merged', id: c.it.o.id });
 }
 
 // ------------------------------------------------------ LCG: the frame ----
@@ -445,8 +481,13 @@ function headings(ctx) {
     + txt(ctx.W - G.pad, 11, `Sheet ${ctx.sheet} of ${ctx.n}`, { size: 8, anchor: 'end', weight: 700 });
   if (pre) {
     s += txt((pre.x0 + pre.x1) / 2, st, pre.cols > 1 ? 'LATENT / ADMISSION' : 'LATENT', { size: 6.8, weight: 700, fill: MUTED });
+    // the panel squeezes the whole latent phase into PRE_COLS columns at most:
+    // each column is labelled with the real time it spans, start over end
+    const span = (pre.to - pre.from) / pre.cols;
     for (let k = 0; k < pre.cols; k++) {
-      s += txt(pre.x0 + (k + 0.5) * G.preCol, tm, hhmm(pre.from + k * (pre.to - pre.from) / pre.cols), { size: 6.6, fill: MUTED });
+      const cx = pre.x0 + (k + 0.5) * G.preCol, t0 = pre.from + k * span;
+      s += txt(cx, tm, hhmm(t0), { size: 6.6, fill: MUTED, cls: 'pre-from' })
+        + txt(cx, hr, `to ${hhmm(t0 + span)}`, { size: 6, fill: MUTED, cls: 'pre-to' });
     }
   }
   const title = ctx.active == null ? `ACTIVE FIRST STAGE - starts at ${ctx.proto.activeStartCm} cm`
@@ -483,18 +524,54 @@ function codeRows(ctx) {
       const flagged = meets(it, r.field, !!r.flag(v, it.o));
       cands.push({ it, label: String(r.label(v, it.o)), flagged, rank: flagged ? 1 : 0 });
     }
-    const cy = row.y + (r.line + 0.5) * row.h / r.lines;
+    const top = row.y + r.line * row.h / r.lines, cy = top + 0.5 * row.h / r.lines;
     for (const c of perCell(cands)) {
       const x = cellX(c.it.P, c.it.cell);
       const open = c.flagged && flagState(ctx.idx, c.it.o, r.field) !== 'ack';
       s += txt(x, cy + 2.8, c.label, { size: r.size || 8, cls: 'v', id: c.it.o.id, weight: c.flagged ? 700 : null, fill: open ? RED : INK });
       if (c.flagged) s += ring(ctx.idx, c.it.o, r.field, x, cy, Math.max(6, c.label.length * 2.4 + 3), row.h / r.lines / 2 - 0.6);
+      s += mergedMark(c, top);
     }
   }
   return s;
 }
 
-/** Baseline FHR: plotted in its band (clamped, so no value leaves it), each cell's value written above. */
+/** -1 above the FHR band's scale, 1 below it, 0 on it. */
+const offBand = v => (v > FHR_BAND.top ? -1 : v < FHR_BAND.bottom ? 1 : 0);
+
+/**
+ * FHR values beyond the band's scale sit on its edge, so each one is also
+ * written out as an arrow pointing off the band and the value: a 65 is never
+ * read as 80. One stack per time slot, oldest at the top, rising from the
+ * lower edge or hanging from the upper one, so close readings never
+ * overprint. marks: [{slot, sx (the slot's centre), edge, dir, v, fill, id}].
+ */
+function offScaleStacks(marks, size) {
+  const slots = new Map();
+  for (const m of marks) {
+    const k = `${m.slot}:${m.dir}`;
+    if (!slots.has(k)) slots.set(k, []);
+    slots.get(k).push(m);
+  }
+  const lh = size + 1.2;
+  let s = '';
+  for (const list of slots.values()) {
+    list.forEach((m, i) => {
+      const y = m.dir > 0 ? m.edge - 3 - (list.length - 1 - i) * lh : m.edge + size + 1.5 + i * lh;
+      const x0 = m.sx - (5.4 + String(m.v).length * size * 0.55) / 2, mid = y - size * 0.35;
+      const base = mid - m.dir * 1.8, tip = mid + m.dir * 1.8;
+      s += `<g class="fhr-off"${idAttr(m.id)}><path d="M${n1(x0)},${n1(base)}L${n1(x0 + 4.4)},${n1(base)}L${n1(x0 + 2.2)},${n1(tip)}Z" fill="${m.fill}"/>`
+        + txt(x0 + 5.4, y, String(m.v), { size, anchor: 'start', weight: 700, fill: m.fill }) + '</g>';
+    });
+  }
+  return s;
+}
+
+/**
+ * Baseline FHR: plotted in its band, each cell's value written above. A value
+ * beyond the band sits on its edge and is written out in its cell's stack
+ * (offScaleStacks) instead.
+ */
 function fhrRow(ctx) {
   const top = ROW.fhr.y + 5;
   let s = '';
@@ -503,19 +580,27 @@ function fhrRow(ctx) {
   }
   const pts = ctx.items.filter(it => it.o.type === 'baby' && it.o.v.fhr != null && Number.isFinite(Number(it.o.v.fhr)));
   s += paths(ctx, pts, it => fhrY(Number(it.o.v.fhr)), BLUE, 1.2, '');
-  const cands = [];
+  const cands = [], offs = [];
   for (const it of pts) {
-    const v = Number(it.o.v.fhr), cy = fhrY(v), flagged = meets(it, 'fhr', FLAG.fhr(v));
+    const v = Number(it.o.v.fhr), cy = fhrY(v), flagged = meets(it, 'fhr', FLAG.fhr(v)), dir = offBand(v);
     s += `<circle class="fhr-pt"${idAttr(it.o.id)} cx="${n1(it.x)}" cy="${n1(cy)}" r="2.2" fill="${BLUE}"/>`;
     if (flagged) s += ring(ctx.idx, it.o, 'fhr', it.x, cy, 4.8, 4.8);
-    cands.push({ it, cy, label: String(v), flagged, rank: flagged ? (FLAG.fhrSevere(v) ? 2 : 1) : 0 });
+    if (dir) {
+      const open = flagged && flagState(ctx.idx, it.o, 'fhr') !== 'ack';
+      offs.push({ slot: `${it.P.key}:${it.cell}`, sx: cellX(it.P, it.cell), edge: cy, dir, v, fill: open ? RED : MUTED, id: it.o.id });
+    }
+    cands.push({ it, cy, off: dir, label: String(v), flagged, rank: flagged ? (FLAG.fhrSevere(v) ? 2 : 1) : 0 });
   }
   for (const c of perCell(cands)) {
     const open = c.flagged && flagState(ctx.idx, c.it.o, 'fhr') !== 'ack';
-    s += txt(cellX(c.it.P, c.it.cell), c.cy - 5 < top + 3 ? c.cy + 10 : c.cy - 5, c.label,
-      { size: 7, cls: 'fhr-v', weight: c.flagged ? 700 : null, fill: open ? RED : MUTED });
+    // an off-scale value is written in its cell's stack
+    if (!c.off) {
+      s += txt(cellX(c.it.P, c.it.cell), c.cy - 5 < top + 3 ? c.cy + 10 : c.cy - 5, c.label,
+        { size: 7, cls: 'fhr-v', weight: c.flagged ? 700 : null, fill: open ? RED : MUTED });
+    }
+    s += mergedMark(c, ROW.fhr.y);
   }
-  return s;
+  return s + offScaleStacks(offs, 6.5);
 }
 
 /** A line through the points of each panel (never across panels or sheets). */
@@ -541,12 +626,14 @@ function progressRows(ctx) {
   let s = limitBar(ctx)
     + paths(ctx, plotted, it => cmY(proto, Math.min(10, Number(it.o.v.dilatation))), TEAL, 1.6, '')
     + paths(ctx, desc, dy, PURPLE, 1.2, ' stroke-dasharray="4 2"');
-  for (const it of dil) {
+  // latent: below the form's grid, written as a number - one per cell (the latest), never overprinted
+  const low = dil.filter(it => Number(it.o.v.dilatation) < min).map(it => ({ it, rank: 0 }));
+  for (const m of perCell(low)) {
+    s += txt(cellX(m.it.P, m.it.cell), c.y + c.h - 3, String(Number(m.it.o.v.dilatation)),
+      { size: 7, cls: 'dil-num', id: m.it.o.id, fill: MUTED, weight: 700 }) + mergedMark(m, c.y + c.h - 11);
+  }
+  for (const it of plotted) {
     const cm = Number(it.o.v.dilatation);
-    if (cm < min) { // latent: below the form's grid, written as a number
-      s += txt(cellX(it.P, it.cell), c.y + c.h - 3, String(cm), { size: 7, cls: 'dil-num', id: it.o.id, fill: MUTED, weight: 700 });
-      continue;
-    }
     const x = n1(it.x), y = n1(cmY(proto, Math.min(10, cm))), r = 3.4;
     s += `<path class="dil-x"${idAttr(it.o.id)} d="M${n1(x - r)},${n1(y - r)}L${n1(x + r)},${n1(y + r)}M${n1(x - r)},${n1(y + r)}L${n1(x + r)},${n1(y - r)}" stroke="${TEAL}" stroke-width="2" fill="none"/>`;
     if ((it.o.flags || []).some(code => ALERT_CODES.dilatation.includes(code))) s += ring(ctx.idx, it.o, 'dilatation', x, y, 6.5, 6.5);
@@ -595,7 +682,8 @@ function oxytocinRow(ctx) {
     if (it.o.kind !== 'oxytocin') continue;
     cands.push({ it, label: isOxytocinStop(it.o) ? 'stop' : `${it.o.oxyUL ?? '-'}/${it.o.oxyDrops ?? '-'}`, rank: 0 });
   }
-  return perCell(cands).map(c => txt(cellX(c.it.P, c.it.cell), ROW.oxytocin.y + 9.3, c.label, { size: 7, cls: 'oxy' })).join('');
+  return perCell(cands).map(c => txt(cellX(c.it.P, c.it.cell), ROW.oxytocin.y + 9.3, c.label, { size: 7, cls: 'oxy' })
+    + mergedMark(c, ROW.oxytocin.y)).join('');
 }
 
 /** Words into lines of at most `width` characters; the last kept line ends in "..." when cut. */
@@ -695,8 +783,10 @@ function focusX(ctx) {
 }
 
 const LCG_LEGEND = 'X cervical dilatation (cm); O descent (fifths palpable above the brim); P pushing began. '
-  + 'Values meeting the ALERT column are circled: red until the alert is acknowledged, grey once acknowledged. '
+  + 'Values meeting the ALERT column are circled: solid red until the alert is acknowledged; dashed grey = acknowledged. '
+  + 'An FHR beyond the scale sits on its edge with an arrow and its value. '
   + 'Red dashed bar = WHO LCG progress time-limit at current dilatation. '
+  + 'Latent / admission columns are labelled with the time each spans; +n = n more entries in that cell than the one shown. '
   + 'Y yes, N no, D declined; SP supine, MO mobile; decelerations N none, E early, L late, V variable, Pr prolonged; '
   + 'fluid I intact, C clear, M+ to M+++ meconium, B blood; position A anterior, P posterior, T transverse; '
   + 'urine P protein, A acetone (- negative, tr trace); ? = an entry without initials. '
@@ -756,12 +846,13 @@ const PARTO_LEGEND = `X dilatation (cm) · O descent (fifths above brim) · bars
     I/C/M/B amniotic fluid · E/V/L early-variable-late decelerations ·
     orange ALERT and red ACTION lines per Ethiopian modified WHO partograph ·
     supportive care: ✓ ok, C no companion, PR no pain relief, F no fluids, SP supine; P pushing began;
-    circled values meet an alert criterion: red until the alert is acknowledged, grey once acknowledged`;
+    circled values meet an alert criterion: solid red until the alert is acknowledged, dashed grey = acknowledged;
+    an FHR beyond the scale sits on its edge with an arrow and its value`;
 
 function partographSVG(p, settings, now, opts) {
   const anchor = new Date((p.admission && p.admission.time) || p.createdAt);
   const birth = birthTime(p) ? toMs(birthTime(p)) : null;
-  const shown = e => birth == null || toMs(e.time) <= birth; // nothing after the birth
+  const shown = e => !afterBirth(toMs(e.time), birth); // nothing after the birth (minute)
   const obsAll = activeObs(p).filter(o => o.v && shown(o)).sort(byTime);
   const meds = live(p.meds).filter(shown);
   const end = chartEnd(p, now);
@@ -856,7 +947,7 @@ function partoLines(c) {
     s += `<text x="${sx + 3}" y="${SEC.cervix.y - 18}" font-size="9" fill="#6a3fb5" font-weight="700" ${FONT}>2nd stage</text>`;
   }
   const push = secondStagePushing(p);
-  if (push && (c.birth == null || toMs(push) <= c.birth)) {
+  if (push && !afterBirth(toMs(push), c.birth)) {
     const px = x(push);
     s += `<g class="p-marker"><line x1="${px}" y1="${SEC.cervix.y}" x2="${px}" y2="${SEC.cervix.y + SEC.cervix.h}" stroke="#6a3fb5" stroke-width="1.5" stroke-dasharray="3 2"/>`
       + `<text x="${px + 3}" y="${cmY(10) + 13}" font-size="12" font-weight="800" fill="#6a3fb5" ${FONT}>P</text></g>`;
@@ -885,11 +976,18 @@ function partoBaby(c) {
   if (fhrPts.length > 1) {
     s += `<polyline points="${fhrPts.map(o => `${c.x(o.time)},${c.fhrY(o.v.fhr)}`).join(' ')}" fill="none" stroke="#1565c0" stroke-width="1.5"/>`;
   }
+  const offs = []; // beyond the scale: written out per half hour (offScaleStacks)
   for (const o of fhrPts) {
-    const cx = c.x(o.time), cy = c.fhrY(o.v.fhr);
+    const cx = c.x(o.time), cy = c.fhrY(o.v.fhr), dir = offBand(Number(o.v.fhr));
     s += `<circle cx="${cx}" cy="${cy}" r="3.2" fill="#1565c0"/>`;
     if (FLAG.fhr(o.v.fhr)) s += ring(c.idx, o, 'fhr', cx, cy, 6, 6);
+    if (dir) {
+      const slot = Math.floor((toMs(o.time) - +c.anchor) / (HOUR / 2));
+      const fill = flagState(c.idx, o, 'fhr') === 'ack' ? MUTED : RED;
+      offs.push({ slot, sx: LEFT + (slot + 0.5) * PXH / 2, edge: cy, dir, v: o.v.fhr, fill, id: o.id });
+    }
   }
+  s += offScaleStacks(offs, 9);
   for (const o of by('baby')) {
     if (o.v.decel) s += partoCode(c, 'decel', o, 'decel', P_DECEL[o.v.decel] || o.v.decel, FLAG.decel(o.v.decel));
     if (o.v.liquor) s += partoCode(c, 'liquor', o, 'liquor', P_LIQUOR[o.v.liquor] || o.v.liquor, FLAG.liquor(o.v.liquor));
@@ -1030,33 +1128,81 @@ export function renderChart(patient, settings, opts = {}) {
 let printTarget = null;
 let printHooked = false;
 
-function printHead(p, settings, sheet, n, now) {
+/** The header of every printed page; `part` is [label, value], e.g. ['Sheet', '1 of 2']. */
+function printHead(p, settings, part, now) {
   const proto = getProtocol(settings, p);
   const adm = (p.admission && p.admission.time) || p.createdAt;
   const ec = settings && settings.ethiopianDates && adm ? ` (${formatEthiopic(eatDate(new Date(adm)), settings.lang)})` : '';
   const items = [
     ['Name', p.name || '-'], ['MRN', p.mrn || '-'], ['Admitted', adm ? fullDate(adm) + ec : '-'],
     ['Protocol', proto.name], ['Facility', (settings && settings.facilityName) || '-'],
-    ['Sheet', `${sheet} of ${n}`], ['Printed', fullDate(now)],
+    part, ['Printed', fullDate(now)],
   ];
   return `<header class="print-head"><strong>${proto.alertActionLines ? 'Partograph' : 'WHO Labour Care Guide'}</strong>`
     + items.map(([k, v]) => `<span><b>${k}:</b> ${esc(v)}</span>`).join('') + '</header>';
 }
 
+const MED_KIND = { medicine: 'Medicine', ivfluid: 'IV fluids', oxytocin: 'Oxytocin' };
+
+/** A medication entry in words: its detail, and for oxytocin the concentration and rate. */
+function medText(m) {
+  const parts = [m.detail, m.oxyUL != null ? `${m.oxyUL} U/L` : '', m.oxyDrops != null ? `${m.oxyDrops} drops/min` : ''];
+  return parts.map(x => String(x ?? '').trim()).filter(Boolean).join(', ');
+}
+
+/**
+ * The appendix after the last sheet: the sheet cuts long assessment, plan and
+ * medicine text with "...", so every note and medication entry that stands
+ * (never a voided one) is written out in full, oldest first. '' when none.
+ */
+function notesAppendix(p, settings, now) {
+  const notes = live(p.notes).filter(x => x.text || x.plan).sort(byTime);
+  const meds = live(p.meds).sort(byTime);
+  if (!notes.length && !meds.length) return '';
+  const td = v => `<td>${esc(v == null || String(v).trim() === '' ? '-' : v)}</td>`;
+  const table = (cls, head, rows) => `<table class="${cls}"><thead><tr>${head.map(x => `<th>${x}</th>`).join('')}</tr></thead>`
+    + `<tbody>${rows.join('')}</tbody></table>`;
+  let html = `<section class="print-notes">${printHead(p, settings, ['Appendix', 'notes and medication in full'], now)}`;
+  if (notes.length) {
+    html += '<h3>Assessment and plan</h3>' + table('print-notes-list', ['Time', 'Initials', 'Assessment', 'Plan'],
+      notes.map(x => `<tr>${td(fullDate(x.time))}${td(x.by)}${td(x.text)}${td(x.plan)}</tr>`));
+  }
+  if (meds.length) {
+    html += '<h3>Medication</h3>' + table('print-meds-list', ['Time', 'Initials', 'Kind', 'Detail'],
+      meds.map(m => `<tr>${td(fullDate(m.time))}${td(m.by)}${td(own(MED_KIND, m.kind) ? MED_KIND[m.kind] : m.kind)}${td(medText(m))}</tr>`));
+  }
+  return html + '</section>';
+}
+
 /**
  * Every sheet of the case as print markup (pure): one section.print-sheet
  * per sheet, each headed with the woman's name, MRN, admission date,
- * protocol and facility, so a continuation sheet never loses its case.
+ * protocol and facility, so a continuation sheet never loses its case; then
+ * the notes appendix (section.print-notes) with the text the sheets cut.
  */
 export function printSheetsHTML(patient, settings, now = new Date()) {
   const n = sheetCount(patient, now, settings);
   let html = '';
   for (let sheet = 1; sheet <= n; sheet++) {
     const c = chartSVG(patient, settings, now, { sheet });
-    html += `<section class="print-sheet sheet-${sheet}">${printHead(patient, settings, sheet, n, now)}${c.svg}`
+    html += `<section class="print-sheet sheet-${sheet}">${printHead(patient, settings, ['Sheet', `${sheet} of ${n}`], now)}${c.svg}`
       + `<p class="print-legend">${esc(c.legend)}</p></section>`;
   }
-  return html;
+  return html + notesAppendix(patient, settings, now);
+}
+
+// css/print.css prints only the sheets from the chart tab with :has(). For
+// browsers without it, while the chart tab prints <body> carries
+// .print-sheets-only and every ancestor of the sheets .print-path, so the
+// stylesheet can hide everything off that path.
+function markPrintPath(box) {
+  document.body.classList.add('print-sheets-only');
+  for (let el = box.parentElement; el && el !== document.body; el = el.parentElement) el.classList.add('print-path');
+}
+
+function clearPrintPath() {
+  document.body.classList.remove('print-sheets-only');
+  for (const el of document.querySelectorAll('.print-path')) el.classList.remove('print-path');
 }
 
 /**
@@ -1072,9 +1218,13 @@ export function renderPrintSheets(patient, settings) {
   if (!printHooked && typeof window !== 'undefined') {
     printHooked = true;
     window.addEventListener('beforeprint', () => {
+      clearPrintPath(); // a print whose afterprint never came must not hide the next one
       const t = printTarget;
-      if (t && t.box.isConnected) t.box.innerHTML = printSheetsHTML(t.patient, t.settings);
+      if (!t || !t.box.isConnected) return;
+      t.box.innerHTML = printSheetsHTML(t.patient, t.settings);
+      markPrintPath(t.box);
     });
+    window.addEventListener('afterprint', clearPrintPath);
   }
   return box;
 }

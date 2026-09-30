@@ -109,6 +109,26 @@ test('an open PPH alert shows the latest measured total', () => {
   assert.match(open[0].title, /900 mL/);
 });
 
+test('an acknowledged open PPH asks again on more blood or a new sign, never for an unrelated check', () => {
+  const p = born();
+  applyObservations(p, iso(1.5), { bloodloss: { ml: 600 } }, LCG, { enteredAt: iso(1.5) });
+  const pph = p.alerts.find(a => a.code === 'pph');
+  Object.assign(pph, { ack: true, action: 'intervention', actionTime: iso(1.45) });
+  // the trigger is still met, but a normal baby check or the same total is no new evidence
+  const baby = applyObservations(p, iso(1.4), { ppBaby: { breathing: 'normal', temp: 36.8, feeding: 'good' } }, LCG, { enteredAt: iso(1.4) });
+  const same = applyObservations(p, iso(1.35), { bloodloss: { ml: 600 } }, LCG, { enteredAt: iso(1.35) });
+  assert.ok(!baby.added.includes(pph) && !same.added.includes(pph));
+  assert.equal(pph.ack, true);
+  const more = applyObservations(p, iso(1.2), { bloodloss: { ml: 900 } }, LCG, { enteredAt: iso(1.2) });
+  assert.ok(more.added.includes(pph));
+  assert.deepEqual([pph.ack, pph.reAlertedAt, pph.meta.totalMl], [false, iso(1.2), 900]);
+  Object.assign(pph, { ack: true, actionTime: iso(1.15) });
+  // pulse 112: below the stand-alone pulse alert, a new PPH sign
+  const sign = applyObservations(p, iso(1.1), { ppMother: { pulse: 112, sys: 110, dia: 70 } }, LCG, { enteredAt: iso(1.1) });
+  assert.ok(sign.added.includes(pph));
+  assert.equal(pph.reAlertedAt, iso(1.1));
+});
+
 test('voiding a postpartum check does not close a PPH raised by the birth record', () => {
   const p = mkPatient({ status: 'second', secondStageStart: iso(3) });
   applyBirth(p, { time: iso(2), outcome: 'live', eblMl: 600, ppVitals: {} }, {}, LCG);

@@ -16,8 +16,9 @@
 // it, so a recurrence was silent. Now:
 //   - an alert is stamped with the OBSERVATION time (S12) and linked to the
 //     entries that raised it;
-//   - while open, a repeat finding updates it (count, lastSeen) and a worse
-//     severity re-opens it for acknowledgement;
+//   - while open, a repeat finding updates it (count, lastSeen); a worse
+//     severity, or a new entry after it was acknowledged, re-opens it for
+//     acknowledgement (escalatedAt / reAlertedAt);
 //   - it resolves on evidence (RESOLVE_ON), when its time rule stops firing,
 //     when every entry behind it is voided, or by hand;
 //   - a finding after resolution opens a NEW unacknowledged alert, episode + 1.
@@ -253,6 +254,10 @@ export function pphTrigger(p, at) {
 // 'pulse 125' -> 'pulse', 'shock index 1.2' -> 'shock'
 const signKinds = signs => signs.map(s => s.split(' ')[0]);
 
+/** New PPH evidence against an earlier summary (meta): more blood measured, or a sign it did not have. */
+const moreEvidence = (meta, prev) => meta.totalMl > prev.totalMl
+  || (meta.signs || []).some(k => !(prev.signs || []).includes(k));
+
 /** Title and meta of a PPH alert for a trigger result. */
 function pphSummary(t) {
   const title = t.level === 'volume'
@@ -271,10 +276,7 @@ function pphDrafts(p, at) {
   // sets no bar: a voided 6500 mL typo must not silence a real 550 mL bleed.
   const closed = (p.alerts || []).filter(a => a.code === 'pph' && a.resolved && a.meta && a.resolvedHow !== 'void');
   const lastClosed = closed[closed.length - 1];
-  if (lastClosed) {
-    const newSign = signKinds(t.signs).some(k => !(lastClosed.meta.signs || []).includes(k));
-    if (t.totalMl <= lastClosed.meta.totalMl && !newSign) return [];
-  }
+  if (lastClosed && !moreEvidence({ totalMl: t.totalMl, signs: signKinds(t.signs) }, lastClosed.meta)) return [];
   const { title, meta } = pphSummary(t);
   return [{ ...A('pph', 'danger', title, PPH_ACTIONS), meta }];
 }
@@ -609,10 +611,24 @@ export function birthAlerts(p) {
 // ------------------------------------------------------------------------
 
 /**
+ * A new entry meeting the alert criteria asks again for an acknowledged open
+ * alert: the form says to circle ANY observation meeting the alert column,
+ * alert the senior and record the assessment and action (lcg-form). A time
+ * rule re-fires every tick and stays silent; an aggregate finding (PPH, with
+ * meta) asks again only on new evidence, never for an unrelated check.
+ */
+function asksAgain(open, d, source, obsId) {
+  if (!open.ack || source !== 'obs' || !obsId) return false;
+  return !d.meta || !open.meta || moreEvidence(d.meta, open.meta);
+}
+
+/**
  * Store drafts as alerts. An open alert of the same code is updated rather
  * than stacked (alert fatigue); a worse severity re-opens it for
- * acknowledgement. Otherwise a new alert opens with the next episode number.
- * opts.time is the observation time the alert is stamped with (S12).
+ * acknowledgement, and so does a new entry once it has been acknowledged
+ * (asksAgain: stamped reAlertedAt). Otherwise a new alert opens with the next
+ * episode number. opts.time is the observation time the alert is stamped
+ * with (S12).
  */
 export function addAlerts(patient, drafts, source = 'obs', opts = {}) {
   const at = opts.time || nowISO();
@@ -623,6 +639,7 @@ export function addAlerts(patient, drafts, source = 'obs', opts = {}) {
   for (const d of drafts) {
     const open = patient.alerts.find(a => a.code === d.code && !a.resolved);
     if (open) {
+      const again = asksAgain(open, d, source, obsId); // before meta is updated below
       if (!open.lastSeen || toMs(at) > toMs(open.lastSeen)) open.lastSeen = at;
       if (source !== 'time') open.count = (open.count || 1) + 1; // a time rule re-fires every tick
       if (obsId) open.obsIds = [...new Set([...linkedObs(open), obsId])];
@@ -630,6 +647,9 @@ export function addAlerts(patient, drafts, source = 'obs', opts = {}) {
       if (d.meta) Object.assign(open, { meta: d.meta, title: d.title });
       if (RANK[d.severity] > RANK[open.severity]) {
         Object.assign(open, { severity: d.severity, title: d.title, advice: d.advice, ack: false, escalatedAt: raisedAt });
+        added.push(open);
+      } else if (again) {
+        Object.assign(open, { ack: false, reAlertedAt: raisedAt });
         added.push(open);
       }
       continue;

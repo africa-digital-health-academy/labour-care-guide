@@ -6,9 +6,10 @@
 // partograph keeps its alert line at the admission dilatation (S7).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chartSVG, sheetCount, printSheetsHTML } from '../js/chart.js';
+import { chartSVG, sheetCount, printSheetsHTML, chartSheet, selectChartSheet } from '../js/chart.js';
 import { LIMITS } from '../js/protocol.js';
 import { applyObservations } from '../js/record.js';
+import { APP_TZ } from '../js/ui.js';
 import { NOW, iso, mkPatient, LCG, ETH } from './helpers.mjs';
 
 const svgOf = (p, settings = LCG, opts = {}) => chartSVG(p, settings, NOW, opts).svg;
@@ -96,22 +97,42 @@ test('F14: descent is an O on its own grid below the cervix grid; dilatation an 
 
 test('a value meeting the ALERT column is circled red, and grey once the alert it raised is acknowledged', () => {
   const p = mkPatient();
-  const { obs: [fast], added: [alert] } = applyObservations(p, iso(2), { baby: { fhr: 172 } }, LCG, { by: 'TE' });
-  const { obs: [slow] } = applyObservations(p, iso(1), { baby: { fhr: 104 } }, LCG, { by: 'TE' });
-  applyObservations(p, iso(3), { baby: { fhr: 140 } }, LCG, { by: 'TE' });
+  const entered = hAgo => ({ by: 'TE', enteredAt: iso(hAgo) });
+  const { obs: [fast], added: [alert] } = applyObservations(p, iso(2), { baby: { fhr: 172 } }, LCG, entered(2));
+  const { obs: [slow] } = applyObservations(p, iso(1), { baby: { fhr: 104 } }, LCG, entered(1));
+  applyObservations(p, iso(3), { baby: { fhr: 140 } }, LCG, entered(0.95));
   assert.equal(alert.code, 'fhr_abn');
   let svg = svgOf(p);
   assert.match(svg, new RegExp(`class="flag-circle" data-id="${fast.id}"[^>]*stroke="#c62828"`));
   assert.equal((svg.match(/class="flag-circle/g) || []).length, 2, 'only the two abnormal values are circled');
-  Object.assign(alert, { ack: true, action: 'Left lateral, fluids', ackBy: 'TE' });
+  Object.assign(alert, { ack: true, action: 'Left lateral, fluids', actionTime: iso(0.9), ackBy: 'TE' });
   svg = svgOf(p);
-  assert.match(svg, new RegExp(`class="flag-circle ack" data-id="${fast.id}"[^>]*stroke="#9aa5a2"`));
+  assert.match(svg, new RegExp(`class="flag-circle ack" data-id="${fast.id}"[^>]*stroke="#9aa5a2"[^>]*stroke-dasharray`));
   // the 104 joined the same open alert, so it is acknowledged with it
   assert.ok(svg.includes(`class="flag-circle ack" data-id="${slow.id}"`));
   // a finding whose own alert still waits stays red
-  const { obs: [late], added: [decel] } = applyObservations(p, iso(0.5), { baby: { fhr: 150, decel: 'late' } }, LCG, { by: 'TE' });
+  const { obs: [late], added: [decel] } = applyObservations(p, iso(0.5), { baby: { fhr: 150, decel: 'late' } }, LCG, entered(0.5));
   assert.equal(decel.code, 'decel');
   assert.ok(svgOf(p).includes(`class="flag-circle" data-id="${late.id}"`));
+});
+
+test('after an acknowledgement a new abnormal value stays solid red until acknowledged again; the earlier one stays grey', () => {
+  const p = mkPatient();
+  const { obs: [first], added: [alert] } = applyObservations(p, iso(2), { baby: { fhr: 172 } }, LCG, { by: 'TE', enteredAt: iso(2) });
+  Object.assign(alert, { ack: true, action: 'monitoring', actionTime: iso(1.9), ackBy: 'TE' });
+  const r = applyObservations(p, iso(1.5), { baby: { fhr: 170 } }, LCG, { by: 'TE', enteredAt: iso(1.5) });
+  assert.deepEqual(r.added, [alert], 'the repeat asks for acknowledgement again');
+  const later = r.obs[0];
+  let svg = svgOf(p);
+  assert.match(svg, new RegExp(`class="flag-circle ack" data-id="${first.id}"[^>]*stroke="#9aa5a2"[^>]*stroke-dasharray`));
+  const open = svg.match(new RegExp(`<ellipse class="flag-circle" data-id="${later.id}"[^>]*>`));
+  assert.ok(open, 'the later value is circled as open');
+  assert.match(open[0], /stroke="#c62828"/);
+  assert.ok(!open[0].includes('stroke-dasharray'), 'an open circle is solid, not dashed');
+  Object.assign(alert, { ack: true, actionTime: iso(1.4) });
+  svg = svgOf(p);
+  assert.ok(svg.includes(`class="flag-circle ack" data-id="${later.id}"`), 'grey once acknowledged again');
+  assert.ok(svg.includes(`class="flag-circle ack" data-id="${first.id}"`));
 });
 
 test('F6: a 13-hour active first stage needs two sheets; sheet 2 starts at hour 12', () => {
@@ -179,7 +200,11 @@ test('the ALERT column is written from LIMITS and FLAG', () => {
     `&lt;${L.fhr.low}, &gt;=${L.fhr.high}`, `&lt;${L.pulse.low}, &gt;=${L.pulse.high}`,
     `&lt;${L.sys.shock}, &gt;=${L.sys.high}`, `&gt;=${L.dia.high}`,
     `&lt;=${L.contractions.low}, &gt;${L.contractions.high}`, 'M+++, B', 'P, T', 'SP', 'N', '&gt;=6h', '&gt;=2h',
+    `&lt;${L.contractions.durLow}, &gt;${L.contractions.durHigh}`,
+    `&lt;${L.temp.low.toFixed(1)}, &gt;=${L.temp.high.toFixed(1)}`,
   ]) assert.ok(crit.includes(want), `${want} in ${crit.join(' | ')}`);
+  // the values of this release, so a wrong LIMITS edit shows up here too
+  for (const want of ['&lt;20, &gt;60', '&lt;35.0, &gt;=37.5']) assert.ok(crit.includes(want), want);
 });
 
 test('WHO codes: supportive Y / N / D, posture SP / MO, urine grades, fluid M+ to M+++', () => {
@@ -205,6 +230,32 @@ test('FHR is clamped inside its band', () => {
     const cy = num(svg, new RegExp(`class="fhr-pt" data-id="${id}" cx="[\\d.]+" cy="([\\d.]+)"`));
     assert.ok(cy >= band.y && cy <= band.y + band.h, `${id} at ${cy} inside ${band.y}-${band.y + band.h}`);
   }
+});
+
+test('every FHR beyond the band is written out with an arrow; readings in one cell stack, never overprint', () => {
+  const p = mkPatient();
+  p.obs.push(
+    { id: 'lo', type: 'baby', time: iso(3), v: { fhr: 65 } },
+    { id: 'lo2', type: 'baby', time: iso(2.9), v: { fhr: 70 } }, // same half-hour cell as 65: one cell label would hide it
+    { id: 'hi', type: 'baby', time: iso(2), v: { fhr: 215 } },
+    { id: 'ok', type: 'baby', time: iso(1), v: { fhr: 140 } },
+  );
+  const svg = svgOf(p);
+  const off = id => {
+    const m = svg.match(new RegExp(`class="fhr-off" data-id="${id}"><path d="M[\\d.]+,([\\d.]+)L[\\d.]+,[\\d.]+L[\\d.]+,([\\d.]+)Z"`
+      + `[^>]*/><text x="([\\d.]+)" y="([\\d.]+)"[^>]*>([^<]*)<`));
+    return m && { dir: Math.sign(Number(m[2]) - Number(m[1])), x: Number(m[3]), y: Number(m[4]), text: m[5] };
+  };
+  const [lo, lo2, hi] = ['lo', 'lo2', 'hi'].map(off);
+  assert.deepEqual([lo.text, lo2.text, hi.text], ['65', '70', '215']);
+  assert.deepEqual([lo.dir, lo2.dir, hi.dir], [1, 1, -1], 'the arrow points off the band: down below it, up above it');
+  assert.ok(Math.abs(lo.x - lo2.x) < 1 && lo2.y - lo.y >= 7, 'one cell: stacked, the older reading on top');
+  const band = rectOf(svg, 'fhr-band');
+  assert.ok(lo2.y < band.y + band.h - 5 && hi.y > band.y + 5, 'written inside the band, off its edges');
+  assert.equal(off('ok'), null, 'a value on the scale needs no arrow');
+  const cellLabels = [...svg.matchAll(/class="fhr-v"[^>]*>([^<]*)</g)].map(m => m[1]);
+  assert.deepEqual(cellLabels, ['140'], 'an off-scale value is not written twice');
+  assert.ok(svgOf(p, ETH).includes('class="fhr-off" data-id="lo"'), 'the partograph writes it out too');
 });
 
 test('shared decision-making rows carry the notes (F13); initials per hour, ? when missing', () => {
@@ -237,4 +288,158 @@ test('print: one sheet section per sheet, each headed with the name and MRN', ()
   assert.equal((html.match(/Almaz &lt;B&gt;/g) || []).length, 2, 'the name is escaped and on every sheet');
   assert.ok(html.includes('MRN-7') && html.includes('Kebele 04 HC') && html.includes('WHO Labour Care Guide (2020)'));
   assert.ok(html.includes('class="sheet-1"') && html.includes('class="sheet-2"'));
+});
+
+// ------------------------------------------------ M4 review pass 1 + walk --
+
+const clock = t => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: APP_TZ });
+const allText = (svg, cls) => [...svg.matchAll(new RegExp(`class="${cls}"[^>]*>([^<]*)<`, 'g'))].map(m => m[1]);
+
+test('latent panel: each column is labelled with the time it spans; a cell merging values shows +n, flagged first', () => {
+  // 9 h of latent labour squeezed into three 3-hour columns (90-minute cells)
+  const p = mkPatient({ createdAt: iso(10), admission: { time: iso(10) }, activeStartTime: iso(1) });
+  p.obs.push(
+    { id: 's1', type: 'supportive', time: iso(9.9), v: { companion: 'Y' }, flags: [] },
+    { id: 's2', type: 'supportive', time: iso(9.5), v: { companion: 'N' }, flags: ['no_companion'] },
+    { id: 's3', type: 'supportive', time: iso(9), v: { companion: 'Y' }, flags: [] },
+    // two entries in one half-hour cell of the active stage: the form's own cell, no +n there
+    { id: 'a1', type: 'supportive', time: iso(0.9), v: { companion: 'Y' }, flags: [] },
+    { id: 'a2', type: 'supportive', time: iso(0.8), v: { companion: 'Y' }, flags: [] },
+  );
+  const svg = svgOf(p);
+  assert.deepEqual(allText(svg, 'pre-from'), [iso(10), iso(7), iso(4)].map(clock));
+  assert.deepEqual(allText(svg, 'pre-to'), [iso(7), iso(4), iso(1)].map(t => `to ${clock(t)}`));
+  assert.deepEqual(texts(svg, 'v', 's2'), ['N'], 'the flagged value wins its cell');
+  assert.deepEqual([texts(svg, 'v', 's1'), texts(svg, 'v', 's3')], [[], []]);
+  assert.deepEqual(texts(svg, 'merged', 's2'), ['+2']);
+  assert.equal(allText(svg, 'merged').length, 1, 'no +n in the active stage');
+});
+
+test('latent dilatation numbers: one per cell, never overprinted', () => {
+  const p = mkPatient({ createdAt: iso(40), admission: { time: iso(40) }, activeStartTime: null, status: 'latent' });
+  p.obs.push(
+    { id: 'x1', type: 'exam', time: iso(39), v: { dilatation: 2 }, flags: [] },
+    { id: 'x2', type: 'exam', time: iso(35), v: { dilatation: 3 }, flags: [] }, // 40 h in 6 cells: same cell as x1
+  );
+  const svg = svgOf(p);
+  assert.deepEqual(allText(svg, 'dil-num'), ['3'], 'the latest');
+  assert.deepEqual(texts(svg, 'merged', 'x2'), ['+1']);
+});
+
+test('pushing and birth in the same minute: the P is drawn; nothing from the minute after the birth is', () => {
+  const p = inSecondStage();
+  const birth = iso(0.5); // entered to the minute
+  Object.assign(p, { status: 'delivered', delivery: { time: birth, mode: 'svd', outcome: 'live' } });
+  const at = ms => new Date(Date.parse(birth) + ms).toISOString();
+  p.obs.push(
+    { id: 'ev1', type: 'event', time: at(25000), v: { event: 'pushing' } },
+    { id: 'b59', type: 'baby', time: at(59000), v: { fhr: 150 } },
+    { id: 'b60', type: 'baby', time: at(60000), v: { fhr: 150 } },
+  );
+  const svg = svgOf(p);
+  assert.ok(svg.includes('class="p-marker"'), 'P in the birth minute');
+  assert.ok(svg.includes('class="birth-marker"'));
+  assert.ok(svg.includes('data-id="b59"'));
+  assert.ok(!svg.includes('data-id="b60"'), 'the minute after the birth is after it');
+  assert.ok(svgOf(p, ETH).includes('class="p-marker"'), 'the partograph draws the P too');
+});
+
+test('F6: an entry at exactly active + 12 h is drawn once, at the end of sheet 1', () => {
+  const count = svg => (svg.match(/class="fhr-pt" data-id="edge"/g) || []).length;
+  const p = mkPatient({ createdAt: iso(13), admission: { time: iso(13) }, activeStartTime: iso(13) });
+  p.obs.push({ id: 'edge', type: 'baby', time: iso(1), v: { fhr: 150 } });
+  assert.equal(sheetCount(p, NOW), 2);
+  const one = svgOf(p, LCG, { sheet: 1 });
+  assert.deepEqual([count(one), count(svgOf(p, LCG, { sheet: 2 }))], [1, 0]);
+  const panel = one.match(/class="panel panel-first" data-from="[^"]+" x="([\d.]+)" y="[\d.]+" width="([\d.]+)"/);
+  assert.equal(num(one, /class="fhr-pt" data-id="edge" cx="([\d.]+)"/), Number(panel[1]) + Number(panel[2]), 'on the last hour line');
+  // a stage of exactly 12 h is one sheet, and the entry is on it
+  const q = mkPatient({ createdAt: iso(12), admission: { time: iso(12) }, activeStartTime: iso(12) });
+  q.obs.push({ id: 'edge', type: 'baby', time: iso(0), v: { fhr: 150 } });
+  assert.equal(sheetCount(q, NOW), 1);
+  assert.equal(count(svgOf(q)), 1);
+});
+
+test('F2/F6: on a continuation sheet the second-stage panel carries the P; sheet 1 has neither', () => {
+  const p = mkPatient({
+    createdAt: iso(15), admission: { time: iso(15) }, activeStartTime: iso(15),
+    status: 'second', secondStageStart: iso(1.5),
+  });
+  p.obs.push({ id: 'e10', type: 'exam', time: iso(1.5), v: { dilatation: 10 } });
+  p.obs.push({ id: 'ev1', type: 'event', time: iso(1), v: { event: 'pushing' } });
+  const one = svgOf(p, LCG, { sheet: 1 }), two = svgOf(p, LCG, { sheet: 2 });
+  assert.ok(!one.includes('class="p-marker"'));
+  const panel = two.match(/class="panel panel-second" data-from="([^"]+)" x="([\d.]+)" y="[\d.]+" width="([\d.]+)"/);
+  assert.equal(panel[1], iso(1.5));
+  const x = num(two, /class="p-marker"><line x1="([\d.]+)"/);
+  assert.ok(x > Number(panel[2]) && x < Number(panel[2]) + Number(panel[3]), 'the P sits in the second-stage panel');
+});
+
+test('F6: a birth in hour 14 with no 10 cm exam is marked on sheet 2 only', () => {
+  const p = mkPatient({
+    createdAt: iso(15), admission: { time: iso(15) }, activeStartTime: iso(15),
+    status: 'delivered', delivery: { time: iso(1), mode: 'svd', outcome: 'live' },
+  });
+  p.obs.push({ id: 'e1', type: 'exam', time: iso(15), v: { dilatation: 5 } });
+  assert.equal(sheetCount(p, NOW), 2);
+  assert.ok(svgOf(p, LCG, { sheet: 2 }).includes('class="birth-marker"'));
+  assert.ok(!svgOf(p, LCG, { sheet: 1 }).includes('class="birth-marker"'));
+  assert.ok(svgOf(p).includes('class="birth-marker"'), 'the newest sheet by default');
+});
+
+test('LCG limit bar: from reaching the current dilatation to its time limit; none once the second stage starts', () => {
+  const p = mkPatient(); // active first stage from iso(5)
+  p.obs.push({ id: 'e1', type: 'exam', time: iso(4), v: { dilatation: 5 } });
+  let svg = svgOf(p);
+  const bar = svg.match(/<line x1="([\d.]+)" y1="[\d.]+" x2="([\d.]+)"[^>]*class="limit-bar"/);
+  assert.ok(bar, 'the bar is drawn');
+  const panel = svg.match(/class="panel panel-first" data-from="[^"]+" x="([\d.]+)" y="[\d.]+" width="([\d.]+)"/);
+  const perHour = Number(panel[2]) / 12;
+  assert.equal(Number(bar[1]), Number(panel[1]) + perHour, 'from 5 cm, reached 1 h into the stage');
+  assert.equal(Number(bar[2]) - Number(bar[1]), 6 * perHour, 'the 6-hour limit at 5 cm');
+  assert.match(svg, />limit 6h at 5 cm</);
+  p.obs.push({ id: 'e2', type: 'exam', time: iso(1), v: { dilatation: 7 } });
+  svg = svgOf(p);
+  assert.match(svg, />limit 3h at 7 cm</);
+  assert.ok(!svg.includes('at 5 cm<'), 'only the current dilatation has a limit');
+  assert.ok(!svgOf(inSecondStage()).includes('class="limit-bar"'));
+});
+
+test('the sheet picked on the chart tab is kept; picking the newest follows labour', () => {
+  const p = mkPatient({ id: 'pick', createdAt: iso(30), admission: { time: iso(30) }, activeStartTime: iso(30) });
+  const later = new Date(+NOW + 7 * 3600000);
+  assert.deepEqual([sheetCount(p, NOW), sheetCount(p, later)], [3, 4]);
+  assert.equal(chartSheet(p, NOW), 3, 'the newest by default');
+  selectChartSheet(p, 1, NOW);
+  assert.deepEqual([chartSheet(p, NOW), chartSheet(p, later)], [1, 1], 'a picked sheet stays');
+  selectChartSheet(p, 3, NOW);
+  assert.equal(chartSheet(p, later), 4, 'the newest follows labour onto a new sheet');
+  selectChartSheet(p, 2, NOW);
+  const shorter = { ...p, activeStartTime: iso(10) }; // e.g. a mistyped active start corrected
+  assert.equal(chartSheet(shorter, NOW), 1, 'a pick past the last sheet shows the last one');
+});
+
+test('print: after the last sheet, every note and medication entry that stands is written out in full', () => {
+  const long = 'Contractions weaker, 2 in 10 minutes lasting 20 seconds; bladder emptied; mobilised; reassess in one hour <b>';
+  const p = mkPatient({ name: 'Almaz', mrn: 'MRN-7' });
+  p.notes.push(
+    { id: 'n1', time: iso(2), by: 'TE', text: long, plan: 'Augment with oxytocin if no change & call senior' },
+    { id: 'n2', time: iso(1), by: 'TE', text: 'Wrong woman', plan: 'x', voided: { at: iso(0.5), by: 'TE', reason: 'wrong case' } },
+  );
+  p.meds.push(
+    { id: 'm1', time: iso(1.5), kind: 'oxytocin', detail: '', oxyUL: 2.5, oxyDrops: 10, by: 'AB', action: 'start' },
+    { id: 'm2', time: iso(3), kind: 'medicine', detail: 'Ampicillin 2 g IV stat, then 1 g IV every 6 hours', by: 'TE', action: 'given' },
+  );
+  const html = printSheetsHTML(p, LCG, NOW);
+  const at = html.indexOf('<section class="print-notes">');
+  assert.ok(at > html.lastIndexOf('<section class="print-sheet'), 'after the last sheet');
+  const appendix = html.slice(at);
+  assert.ok(appendix.includes('Almaz') && appendix.includes('MRN-7'), 'headed with the woman');
+  assert.ok(appendix.includes(long.replace('<b>', '&lt;b&gt;')), 'the whole assessment, escaped');
+  assert.ok(appendix.includes('Augment with oxytocin if no change &amp; call senior'));
+  assert.ok(!appendix.includes('Wrong woman'), 'a voided note is left out');
+  assert.ok(appendix.includes('<td>AB</td><td>Oxytocin</td><td>2.5 U/L, 10 drops/min</td>'));
+  assert.ok(appendix.includes('Ampicillin 2 g IV stat, then 1 g IV every 6 hours'));
+  assert.ok(appendix.indexOf('Ampicillin') < appendix.indexOf('2.5 U/L'), 'oldest first');
+  assert.ok(!printSheetsHTML(mkPatient(), LCG, NOW).includes('print-notes'), 'no appendix without notes or medication');
 });

@@ -107,8 +107,8 @@ function chartTab(p, now) {
     live,
     h('p', { class: 'chart-legend no-print', style: 'margin:0' }, chartLegend(p, S.settings)),
     h('p', { class: 'muted no-print', style: 'margin-top:4px' }, lcg
-      ? 'Drawn from the entries like the WHO sheet: a value meeting the ALERT column is circled, red until its alert'
-        + ` is acknowledged, then grey. Each sheet covers ${SHEET_HOURS} hours of the active first stage.`
+      ? 'Drawn from the entries like the WHO sheet: a value meeting the ALERT column is circled, solid red until its alert'
+        + ` is acknowledged, then dashed grey. Each sheet covers ${SHEET_HOURS} hours of the active first stage.`
         + ' Scroll sideways for the full timeline.'
       : 'Drawn from the entries: Ethiopian modified WHO partograph with its alert and action lines.'
         + ' Scroll sideways for the full timeline.'),

@@ -173,6 +173,16 @@ test('indicator export rows: the period and the facility in front of every row',
   assert.ok(csv.includes(`"'=cmd"`), 'formula guard on the facility name');
 });
 
+test('the Robson breakdown accounts for every birth and every caesarean, unclassified included', () => {
+  const cases = [...fixture(), birthCase('U', { para: null, delivery: { time: iso(1), mode: 'cs', outcome: 'live' } })];
+  const ind = computeIndicators(cases, { ...JUNE, settings: LCG, now: NOW });
+  const rows = robsonBreakdown(ind.caesarean.robson);
+  assert.equal(ind.births, 4);
+  assert.equal(rows.reduce((n, r) => n + r.births, 0), ind.births);
+  assert.equal(rows.reduce((n, r) => n + r.cs, 0), ind.caesarean.n);
+  assert.deepEqual(rows[rows.length - 1], { group: 'unclassified', births: 1, cs: 1, rate: 1 });
+});
+
 test('Robson breakdown: reading order 1, 2a, 2b ... 10, unclassified last, with each group rate', () => {
   const rows = robsonBreakdown({
     10: { births: 2, cs: 1 }, unclassified: { births: 1, cs: 0 }, '2b': { births: 1, cs: 1 },
@@ -308,6 +318,17 @@ test('birth register rows: admission order, demo cases left out, names kept, aud
   assert.equal(col(ra, 'voided_count'), 2);
   assert.equal(col(ra, 'obs_count'), a.obs.length - 2, 'entries that stand');
   assert.equal(col(rb, 'voided_count'), 0);
+});
+
+test('birth register: lcg_score is empty for a case that never reached the active first stage', () => {
+  const latent = mkPatient({
+    id: 'L', name: 'Latent', status: 'referred', activeStartTime: null, secondStageStart: null,
+    referral: { time: iso(2), reasons: [], handoverAt: iso(1.5) },
+  });
+  const rows = registerRows([latent], LCG, NOW);
+  assert.equal(col(rows[1], 'lcg_score'), null);
+  const cells = toCSV(rows).slice(1).split('\r\n')[1].split(',');
+  assert.equal(cells[REGISTER_COLUMNS.indexOf('lcg_score')], '""', 'an empty CSV cell, not 0');
 });
 
 test('birth register blood loss: the larger of the measured total and the estimate; voided readings never count', () => {

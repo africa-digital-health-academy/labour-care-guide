@@ -133,11 +133,16 @@ function initials(p, b) {
   return { windows: total, met, rate: rateOf(met, total) };
 }
 
+/** When the alert last asked for acknowledgement: raised, severity raised, or asked again by a new entry. */
+function promptedAt(a) {
+  return Math.max(...[a.reAlertedAt, a.escalatedAt, a.raisedAt, a.time].filter(Boolean).map(toMs).filter(Number.isFinite));
+}
+
 function alertHandling(p, b) {
   const raised = (p.alerts || []).filter(a => a.severity !== 'info' && toMs(a.time) >= b.start && toMs(a.time) <= b.end);
   const acked = raised.filter(a => a.ack);
   const inTime = acked.filter(a => a.actionTime
-    && toMs(a.actionTime) - toMs(a.raisedAt || a.time) <= LIMITS.audit.ackWithinMin * MIN);
+    && toMs(a.actionTime) - promptedAt(a) <= LIMITS.audit.ackWithinMin * MIN);
   return {
     raised: raised.length, acknowledged: acked.length, ackedInTime: inTime.length,
     actioned: acked.filter(a => a.action).length,
