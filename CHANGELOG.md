@@ -68,7 +68,11 @@ yet (M3); the engine is wired into the existing ones.
   entry; labour-only findings stayed open after birth; a pushing mark just
   before the 10 cm exam was ignored; the audit skipped the last cell before
   birth.
-- Tests: 259, up from 40.
+- Review pass 2 verified those fixes and found one more, also fixed: a PPH
+  closed because its readings were voided kept the voided total as its
+  re-open bar, so a voided 6500 mL typo would have silenced a real bleed
+  below 6500 mL.
+- Tests: 264, up from 40.
 
 ## 2.0.0-dev (unreleased) - milestone M1, 28 September 2026
 
