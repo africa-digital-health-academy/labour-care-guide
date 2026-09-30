@@ -59,7 +59,16 @@ yet (M3); the engine is wired into the existing ones.
   and a formula guard.
 - The chart is split into a pure chartSVG() that the tests can run; voided
   entries are never drawn.
-- Tests: 240, up from 40.
+- Independent clinical review, pass 1, found and this milestone fixed: new
+  cases were saved without a schema version, so a reload could mark a
+  referred woman as departed and stop her monitoring (cases are now created
+  in the current schema and referrals start as "not yet left"); voiding a
+  postpartum entry could close a PPH raised by the birth record; a closed PPH
+  did not re-open on new abnormal signs; the ROM time did not follow a voided
+  entry; labour-only findings stayed open after birth; a pushing mark just
+  before the 10 cm exam was ignored; the audit skipped the last cell before
+  birth.
+- Tests: 259, up from 40.
 
 ## 2.0.0-dev (unreleased) - milestone M1, 28 September 2026
 

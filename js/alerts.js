@@ -252,22 +252,30 @@ export function pphTrigger(p, at) {
 // 'pulse 125' -> 'pulse', 'shock index 1.2' -> 'shock'
 const signKinds = signs => signs.map(s => s.split(' ')[0]);
 
+/** Title and meta of a PPH alert for a trigger result. */
+function pphSummary(t) {
+  const title = t.level === 'volume'
+    ? `PPH: blood loss ${t.totalMl} mL${t.signs.length ? ' with ' + t.signs.join(', ') : ''}`
+    : `PPH: ${t.totalMl} mL with ${t.signs.join(', ')}`;
+  return { title, meta: { totalMl: t.totalMl, level: t.level, signs: signKinds(t.signs) } };
+}
+
 function pphDrafts(p, at) {
   const t = pphTrigger(p, at);
   if (!t) return [];
   // Blood loss only ever grows, so once a PPH episode has been closed a new
   // one opens only on new evidence: more bleeding measured than at that
-  // closure, or an abnormal sign that was absent at closure.
-  const closed = (p.alerts || []).filter(a => a.code === 'pph' && a.resolved && a.meta);
+  // closure, or an abnormal sign that was absent at closure. An episode
+  // closed because its readings were voided was never a real episode and
+  // sets no bar: a voided 6500 mL typo must not silence a real 550 mL bleed.
+  const closed = (p.alerts || []).filter(a => a.code === 'pph' && a.resolved && a.meta && a.resolvedHow !== 'void');
   const lastClosed = closed[closed.length - 1];
   if (lastClosed) {
     const newSign = signKinds(t.signs).some(k => !(lastClosed.meta.signs || []).includes(k));
     if (t.totalMl <= lastClosed.meta.totalMl && !newSign) return [];
   }
-  const title = t.level === 'volume'
-    ? `PPH: blood loss ${t.totalMl} mL${t.signs.length ? ' with ' + t.signs.join(', ') : ''}`
-    : `PPH: ${t.totalMl} mL with ${t.signs.join(', ')}`;
-  return [{ ...A('pph', 'danger', title, PPH_ACTIONS), meta: { totalMl: t.totalMl, level: t.level, signs: signKinds(t.signs) } }];
+  const { title, meta } = pphSummary(t);
+  return [{ ...A('pph', 'danger', title, PPH_ACTIONS), meta }];
 }
 
 // --------------------------------------------------- observation rules ----
@@ -788,12 +796,18 @@ export function unlinkObservation(p, obsId, at, by = null) {
   const resolved = [], reopened = [];
   for (const a of p.alerts || []) {
     const ids = linkedObs(a);
-    if (ids.includes(obsId)) {
-      a.obsIds = ids.filter(id => id !== obsId);
-      if (!a.resolved && a.source === 'obs') {
-        const stillMet = a.code === 'pph' ? !!pphTrigger(p) : a.obsIds.length > 0;
-        if (!stillMet) resolved.push(markResolved(a, at, 'void', by));
-      }
+    const linked = ids.includes(obsId);
+    if (linked) a.obsIds = ids.filter(id => id !== obsId);
+    if (!a.resolved && a.code === 'pph') {
+      // An aggregate trigger is decided on the readings that remain, whether or
+      // not the voided one was linked (the volume reading recorded before the
+      // completing sign never is). Still met: show the remaining figures, so a
+      // later closure does not keep a voided total as its re-open bar.
+      const t = pphTrigger(p);
+      if (t) Object.assign(a, pphSummary(t));
+      else if (a.source === 'obs') resolved.push(markResolved(a, at, 'void', by));
+    } else if (linked && !a.resolved && a.source === 'obs' && !a.obsIds.length) {
+      resolved.push(markResolved(a, at, 'void', by));
     }
     if (a.resolved && a.resolvedByObs === obsId) reopened.push(reopen(a));
   }

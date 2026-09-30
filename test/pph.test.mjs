@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   pphTrigger, haemodynamicSigns, bloodLossTotal, birthAlerts, resolveAlert, PPH_BUNDLE, AMTSL_STEPS, EMERGENCIES,
 } from '../js/alerts.js';
-import { applyObservations, applyBirth, voidObservation } from '../js/record.js';
+import { applyObservations, applyBirth, voidObservation, voidDelivery } from '../js/record.js';
 import { iso, mkPatient, LCG } from './helpers.mjs';
 
 function born(delivery = {}) {
@@ -130,6 +130,48 @@ test('an entry-raised PPH closes when its only qualifying reading is voided, and
   const dup = applyObservations(q, iso(1.5), { bloodloss: { ml: 650 } }, LCG).obs[0];
   voidObservation(q, dup.id, LCG, { reason: 'duplicate reading' });
   assert.equal(q.alerts.find(a => a.code === 'pph').resolved, false);
+});
+
+// review pass 2 regressions
+test('a voided typo sets no bar: a real bleed after it still raises PPH', () => {
+  const p = born();
+  const typo = applyObservations(p, iso(1.5), { bloodloss: { ml: 6500 } }, LCG).obs[0];
+  voidObservation(p, typo.id, LCG, { reason: 'typed 6500 for 650' });
+  const real = applyObservations(p, iso(1.2), { bloodloss: { ml: 550 } }, LCG);
+  const pph = real.added.find(a => a.code === 'pph');
+  assert.ok(pph, 'the 550 mL haemorrhage must alert');
+  assert.equal(pph.episode, 2);
+});
+
+test('a birth voided and recorded again raises PPH again', () => {
+  const p = mkPatient({ status: 'second', secondStageStart: iso(3) });
+  applyBirth(p, { time: iso(2), outcome: 'live', eblMl: 600, ppVitals: {} }, {}, LCG);
+  voidDelivery(p, LCG, { reason: 'recorded on the wrong woman' });
+  const again = applyBirth(p, { time: iso(1.8), outcome: 'live', eblMl: 600, ppVitals: {} }, {}, LCG);
+  assert.ok(again.added.some(a => a.code === 'pph'));
+});
+
+test('voiding the volume reading that completed nothing on its own still re-checks the PPH', () => {
+  const p = born();
+  const volume = applyObservations(p, iso(1.5), { bloodloss: { ml: 350 } }, LCG).obs[0];
+  applyObservations(p, iso(1.4), { ppMother: { pulse: 118, sys: 104, dia: 70 } }, LCG);
+  const pph = p.alerts.find(a => a.code === 'pph');
+  assert.equal(pph.obsIds.includes(volume.id), false, 'the reading was never linked');
+  voidObservation(p, volume.id, LCG, { reason: 'drape of another woman' });
+  assert.equal(pph.resolved, true);
+  assert.equal(pph.resolvedHow, 'void');
+});
+
+test('when the PPH is still met after a void, it shows the remaining total, not the voided one', () => {
+  const p = born();
+  applyObservations(p, iso(1.5), { bloodloss: { ml: 550 } }, LCG);
+  const typo = applyObservations(p, iso(1.3), { bloodloss: { ml: 6500 } }, LCG).obs[0];
+  const pph = p.alerts.find(a => a.code === 'pph');
+  assert.match(pph.title, /6500 mL/);
+  voidObservation(p, typo.id, LCG, { reason: 'typo' });
+  assert.equal(pph.resolved, false);
+  assert.match(pph.title, /550 mL/);
+  assert.equal(pph.meta.totalMl, 550);
 });
 
 test('the trigger is only checked in the 24 h after birth', () => {

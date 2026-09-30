@@ -183,6 +183,15 @@ test('ROM follows the entries: voiding the only fluid finding clears it; a later
   assert.equal(p.romTime, iso(1));
 });
 
+test('ROM moves to the next surviving fluid finding when the earliest is voided', () => {
+  const p = latent();
+  const early = applyObservations(p, iso(3), { baby: { fhr: 140, liquor: 'C' } }, LCG).obs[0];
+  applyObservations(p, iso(2), { exam: { dilatation: 6, liquor: 'C' } }, LCG);
+  assert.equal(p.romTime, iso(3));
+  voidObservation(p, early.id, LCG, { reason: 'wrong woman' });
+  assert.equal(p.romTime, iso(2));
+});
+
 test('ROM reported at admission is never re-derived from entries', () => {
   const p = mkPatient({ romTime: iso(10) });
   const clear = applyObservations(p, iso(3), { baby: { fhr: 140, liquor: 'C' } }, LCG).obs[0];
