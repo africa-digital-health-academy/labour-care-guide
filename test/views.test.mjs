@@ -1,13 +1,18 @@
 // The screens' DOM-free checks (M3 review pass 1): the birth and admission
 // forms never record an answer nobody gave, "Record check" offers no baby
 // check after a stillbirth, and the admission summary shows only what was
-// examined.
+// examined. M4: a birth recorded again after a correction is never later than
+// a postpartum check that survived it, and closing a case has a tested rule
+// and writes known fields.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { birthProblem } from '../js/views/delivery.js';
 import { admissionProblem } from '../js/views/admission.js';
-import { recordTypes, admissionExamText } from '../js/views/patient.js';
-import { iso, mkPatient } from './helpers.mjs';
+import { recordTypes, admissionExamText, canClose, closeFields } from '../js/views/patient.js';
+import { applyBirth, applyObservations, voidObservation, voidDelivery } from '../js/record.js';
+import { postpartumBPCount, urinePassedSinceBirth } from '../js/protocol.js';
+import { fmtTime, fmtDT } from '../js/ui.js';
+import { iso, mkPatient, LCG } from './helpers.mjs';
 
 const answered = {
   outcome: 'live', mode: 'svd', resus: 'N', placentaComplete: 'Y', perineum: 'intact',
@@ -60,4 +65,93 @@ test('admission summary: descent and presentation are shown only when recorded',
   assert.deepEqual(parts({ dilatation: 4, descent: 0, fhr: 140 }), ['4 cm', 'descent 0/5', 'FHR 140']);
   assert.deepEqual(parts({ dilatation: 6, descent: 3, fhr: 150, presentation: 'breech' }),
     ['6 cm', 'descent 3/5', 'FHR 150', 'breech']);
+});
+
+// ------------------------------- M4: correcting a birth record's time -----
+
+// Fixed UTC times on one Addis Ababa day (07:00Z is 10:00 there), whatever
+// the test machine's timezone: the message names the check's time of day.
+const at = min => new Date(Date.UTC(2026, 5, 12, 7, 0) + min * 60000).toISOString();
+const tooLate = o => `Birth time is after a postpartum check recorded at ${fmtTime(o.time)} - check the time, or void that check in Entries if it was wrong`;
+const motherCheck = { ppMother: { bleeding: 'normal', tone: 'firm', pulse: 82, sys: 112, dia: 72, urinePassed: 'Y' } };
+
+/** Birth recorded at at(0), postpartum entries at the given minutes, then the birth record corrected. */
+function correctedBirth(entries) {
+  const p = mkPatient({
+    createdAt: at(-360), admission: { time: at(-360) },
+    status: 'second', activeStartTime: at(-300), secondStageStart: at(-60),
+  });
+  applyBirth(p, { time: at(0), mode: 'svd', outcome: 'live', ppVitals: {} }, {}, LCG, { by: 'TE' });
+  const obs = entries.map(([min, values]) => applyObservations(p, at(min), values, LCG, { by: 'TE' }).obs[0]);
+  voidDelivery(p, LCG, { by: 'TE', reason: 'wrong birth time' });
+  return { p, obs };
+}
+
+test('birth form: a corrected birth may not be later than a postpartum check that survived it', () => {
+  const { p, obs: [check] } = correctedBirth([[20, motherCheck]]);
+  assert.equal(birthProblem(answered, at(30), 'TE', p), tooLate(check));
+  assert.equal(birthProblem(answered, at(20), 'TE', p), null, 'at the time of the check');
+  assert.equal(birthProblem(answered, at(10), 'TE', p), null, 'before the check');
+  // the bound is the engine's own: a check at the birth time still counts
+  applyBirth(p, { time: at(20), mode: 'svd', outcome: 'live', ppVitals: {} }, {}, LCG, { by: 'TE' });
+  assert.equal(postpartumBPCount(p), 1);
+  assert.equal(urinePassedSinceBirth(p), true);
+});
+
+test('birth form: the earliest surviving postpartum entry of any kind bounds the birth; voided ones do not', () => {
+  const { p, obs: [loss, baby, mother] } = correctedBirth([
+    [15, { bloodloss: { ml: 200, method: 'drape' } }],
+    [25, { ppBaby: { breathing: 'normal' } }],
+    [40, motherCheck],
+  ]);
+  assert.equal(birthProblem(answered, at(20), 'TE', p), tooLate(loss));
+  voidObservation(p, loss.id, LCG, { by: 'TE', reason: 'drape of another woman' });
+  assert.equal(birthProblem(answered, at(20), 'TE', p), null, 'a voided reading sets no bound');
+  assert.equal(birthProblem(answered, at(30), 'TE', p), tooLate(baby));
+  voidObservation(p, baby.id, LCG, { by: 'TE', reason: 'wrong baby' });
+  assert.equal(birthProblem(answered, at(45), 'TE', p), tooLate(mother));
+  voidObservation(p, mother.id, LCG, { by: 'TE', reason: 'wrong woman' });
+  assert.equal(birthProblem(answered, at(45), 'TE', p), null, 'every check voided: no bound');
+});
+
+test('birth form: with the case given, the existing rules still apply', () => {
+  const { p } = correctedBirth([[20, motherCheck]]);
+  assert.equal(birthProblem({ ...answered, perineum: null }, at(10), 'TE', p), 'Still to answer: perineum');
+  assert.match(birthProblem(answered, new Date(Date.now() + 3600000).toISOString(), 'TE', p), /future/);
+  assert.match(birthProblem(answered, at(10), '', p), /initials/);
+  assert.equal(birthProblem(answered, at(30), 'TE', mkPatient()), null, 'no postpartum entry: no bound');
+});
+
+test('birth form: a check on another day than the typed birth time is named with its date', () => {
+  // 23:50 on 12 June in Addis Ababa; the birth typed as 00:10 on 13 June
+  const checkAt = '2026-06-12T20:50:00.000Z';
+  const p = mkPatient({ obs: [{ id: 'pm', type: 'ppMother', time: checkAt, by: 'TE', v: { bleeding: 'normal' } }] });
+  assert.equal(birthProblem(answered, '2026-06-12T21:10:00.000Z', 'TE', p),
+    `Birth time is after a postpartum check recorded at ${fmtDT(checkAt)} - check the time, or void that check in Entries if it was wrong`);
+});
+
+// ------------------------------------------------ M4: closing a case ------
+
+test('close case: only when she is not in labour, and only once', () => {
+  for (const status of ['latent', 'active', 'second']) assert.equal(canClose(mkPatient({ status })), false, status);
+  assert.equal(canClose(mkPatient({ status: 'referred' })), false, 'referred in labour, handover not recorded');
+  assert.equal(canClose(mkPatient({ status: 'referred', referral: { handoverAt: iso(1) } })), true, 'handed over');
+  assert.equal(canClose(mkPatient({ status: 'delivered', delivery: { time: iso(1) } })), true,
+    'in the postpartum watch: allowed, the dialog warns');
+  assert.equal(canClose(mkPatient({ status: 'closed' })), false, 'already closed');
+});
+
+test('close case: writes status, time and initials as new fields; refuses what canClose refuses', () => {
+  const p = mkPatient({ status: 'delivered', delivery: { time: iso(2) } });
+  const before = structuredClone(p);
+  const fields = closeFields(p, 'TE', iso(0));
+  assert.deepEqual(fields, { status: 'closed', closedAt: iso(0), closedBy: 'TE' });
+  assert.deepEqual(p, before, 'the case itself is not changed');
+  const closed = { ...p, ...fields };
+  assert.equal(canClose(closed), false);
+  assert.throws(() => closeFields(closed, 'TE', iso(0)), /already closed/);
+  assert.throws(() => closeFields(mkPatient({ status: 'active' }), 'TE', iso(0)), /in labour cannot be closed/);
+  assert.throws(() => closeFields(mkPatient({ status: 'referred' }), 'TE', iso(0)), /in labour cannot be closed/);
+  assert.throws(() => closeFields(p, '', iso(0)), /Initials are required/);
+  assert.throws(() => closeFields(p, '  ', iso(0)), /Initials are required/);
 });

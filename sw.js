@@ -16,7 +16,7 @@ const CACHE_VERSION = 'lcg-' + self.LCG_VERSION;
 
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
-  './css/app.css',
+  './css/app.css', './css/print.css',
   './icons/icon.svg', './icons/icon-maskable.svg',
   './js/version.js',
   './js/app.js', './js/store.js', './js/db.js', './js/migrate.js', './js/ui.js', './js/i18n.js',
