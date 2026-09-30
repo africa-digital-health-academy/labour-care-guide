@@ -72,6 +72,36 @@ test('migrateAll reports changed=false once every record is already current', ()
   assert.equal(result.patients[0], current);
 });
 
+test('schema 3: a referral made before the handover rule is treated as handed over at the referral time', () => {
+  const v2 = {
+    ...migrateCase(V1_PATIENT, { protocol: 'lcg' }).p, schemaVersion: 2,
+    status: 'referred', referral: { time: '2026-06-12T06:00:00.000Z', reasons: [] },
+  };
+  const { p, changed } = migrateCase(v2, { protocol: 'lcg' });
+  assert.equal(changed, true);
+  assert.equal(p.schemaVersion, 3);
+  assert.equal(p.referral.handoverAt, '2026-06-12T06:00:00.000Z');
+  assert.equal(p.referral.handoverInferred, true);
+  assert.equal(v2.referral.handoverAt, undefined, 'migrateCase must not mutate its input');
+});
+
+test('schema 3: no referral means only the version changes; a recorded handover is kept', () => {
+  const plain = { ...migrateCase(V1_PATIENT, { protocol: 'lcg' }).p, schemaVersion: 2 };
+  const { p } = migrateCase(plain, { protocol: 'lcg' });
+  assert.equal(p.referral, null);
+  assert.equal(p.schemaVersion, 3);
+  const kept = { ...plain, referral: { time: '2026-06-12T06:00:00.000Z', handoverAt: null } };
+  assert.equal(migrateCase(kept, { protocol: 'lcg' }).p.referral.handoverAt, null, 'an explicit value is never overwritten');
+});
+
+test('a v1 record with a referral goes straight to schema 3 with the handover inferred', () => {
+  const v1 = { ...V1_PATIENT, status: 'referred', referral: { time: '2026-06-12T05:30:00.000Z', reasons: [] } };
+  const { p } = migrateCase(v1, { protocol: 'lcg' });
+  assert.equal(p.schemaVersion, CASE_SCHEMA);
+  assert.equal(p.protocolId, 'lcg');
+  assert.equal(p.referral.handoverAt, '2026-06-12T05:30:00.000Z');
+});
+
 test('restore matrix: a patient absent locally is added', () => {
   const { toWrite, added, updated, skipped } = planRestore([], [V1_PATIENT], { protocol: 'lcg' });
   assert.equal(added, 1); assert.equal(updated, 0); assert.equal(skipped, 0);

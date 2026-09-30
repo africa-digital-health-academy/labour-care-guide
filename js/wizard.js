@@ -7,8 +7,9 @@
 
 import { h, clear, openModal, numpad, stepper, segmented, toast, beep, alertBanner, minutesAgoISO } from './ui.js';
 import { t } from './i18n.js';
-import { LIMITS, getProtocol, stageOf } from './protocol.js';
-import { evaluateObs, addAlerts } from './alerts.js';
+import { getProtocol } from './protocol.js';
+import { FLAG } from './alerts.js';
+import { applyObservations } from './record.js';
 import { S, savePatient, uid } from './store.js';
 
 // ------------------------------------------------------------ questions ----
@@ -20,7 +21,7 @@ const STEPS = {
     {
       key: 'fhr', q: 'Fetal heart rate (bpm)?', required: true,
       help: 'Listen for at least 1 full minute, through a contraction and 30 s after it.',
-      render: (v, on) => numpad(v, on, { unit: 'bpm', maxLen: 3, alertFn: n => n < LIMITS.fhr.low || n >= LIMITS.fhr.high }),
+      render: (v, on) => numpad(v, on, { unit: 'bpm', maxLen: 3, alertFn: FLAG.fhr }),
     },
     {
       key: 'decel', q: 'Decelerations heard?', dflt: 'none',
@@ -59,22 +60,22 @@ const STEPS = {
   pulse: () => [
     {
       key: 'pulse', q: 'Maternal pulse (bpm)?', required: true,
-      render: (v, on) => numpad(v, on, { unit: 'bpm', maxLen: 3, alertFn: n => n < LIMITS.pulse.low || n >= LIMITS.pulse.high }),
+      render: (v, on) => numpad(v, on, { unit: 'bpm', maxLen: 3, alertFn: FLAG.pulse }),
     },
   ],
 
   vitals: () => [
     {
       key: 'sys', q: 'Blood pressure — SYSTOLIC?', required: true,
-      render: (v, on) => numpad(v, on, { unit: 'mmHg', maxLen: 3, alertFn: n => n >= LIMITS.sys.high || n < LIMITS.sys.shock }),
+      render: (v, on) => numpad(v, on, { unit: 'mmHg', maxLen: 3, alertFn: FLAG.sys }),
     },
     {
       key: 'dia', q: 'Blood pressure — DIASTOLIC?', required: true,
-      render: (v, on) => numpad(v, on, { unit: 'mmHg', maxLen: 3, alertFn: n => n >= LIMITS.dia.high }),
+      render: (v, on) => numpad(v, on, { unit: 'mmHg', maxLen: 3, alertFn: FLAG.dia }),
     },
     {
       key: 'temp', q: 'Temperature (°C)?', optional: true,
-      render: (v, on) => numpad(v, on, { unit: '°C', decimal: true, maxLen: 4, alertFn: n => n >= LIMITS.temp.high || n < LIMITS.temp.low }),
+      render: (v, on) => numpad(v, on, { unit: '°C', decimal: true, maxLen: 4, alertFn: FLAG.temp }),
     },
     {
       key: 'protein', q: 'Urine protein (dipstick)?', optional: true,
@@ -275,42 +276,19 @@ export function openRecordWizard(patient, types, onComplete) {
   showTimePicker();
 }
 
-/** Persist collected values as observations, run the alert engine, handle stage transitions. */
+/**
+ * Persist collected values through the record layer (record.js), which
+ * stamps author and source, derives the stage and runs the alert engine.
+ * Per-entry initials arrive with the M3 screens; until then the Settings
+ * provider name is the author.
+ */
 export async function saveObservations(patient, timeISO, values) {
-  const allNew = [];
-  for (const [type, v] of Object.entries(values)) {
-    if (!v || !Object.keys(v).length) continue;
-    if (type === 'contractions' && v.durBand) {
-      v.duration = { lt20: 15, b20_40: 30, b40_60: 50, gt60: 70 }[v.durBand];
-    }
-    const obs = { id: uid(), type, time: timeISO, enteredAt: new Date().toISOString(), v };
-    patient.obs = patient.obs || [];
-    patient.obs.push(obs);
-
-    // stage / state transitions driven by data
-    if ((type === 'baby' || type === 'exam') && v.liquor && v.liquor !== 'I' && !patient.romTime) {
-      patient.romTime = timeISO;
-    }
-    if (type === 'exam' && v.dilatation != null) {
-      const proto = getProtocol(S.settings, patient);
-      if (v.dilatation >= proto.activeStartCm && stageOf(patient) === 'latent') {
-        patient.status = 'active';
-        patient.activeStartTime = timeISO;
-        toast(`Active labour — partograph started (${proto.activeStartCm} cm reached)`);
-      }
-      if (v.dilatation >= 10 && stageOf(patient) !== 'second') {
-        patient.status = 'second';
-        patient.secondStageStart = timeISO;
-        toast('Fully dilated — second stage timer started');
-      }
-    }
-
-    const drafts = evaluateObs(patient, obs, S.settings);
-    obs.flags = drafts.map(d => d.code);
-    allNew.push(...addAlerts(patient, drafts, 'obs'));
-  }
+  const proto = getProtocol(S.settings, patient);
+  const r = applyObservations(patient, timeISO, values, S.settings, { by: S.settings.midwifeName || null });
+  if (r.transitions.includes('active')) toast(`Active labour — chart started (${proto.activeStartCm} cm reached)`);
+  if (r.transitions.includes('second')) toast('Fully dilated — second stage timer started');
   await savePatient(patient);
-  return allNew;
+  return r.added;
 }
 
 // ------------------------------------------------- alert acknowledgement ----
@@ -378,7 +356,11 @@ export function openMedicationModal(patient) {
       h('button', {
         class: 'btn', onclick: async () => {
           patient.meds = patient.meds || [];
-          patient.meds.push({ id: uid(), time: new Date().toISOString(), kind, detail, oxyUL, oxyDrops });
+          patient.meds.push({
+            id: uid(), time: new Date().toISOString(), kind, detail, oxyUL, oxyDrops,
+            action: kind === 'oxytocin' ? (patient.oxytocinRunning ? 'rate' : 'start') : undefined,
+            by: S.settings.midwifeName || null,
+          });
           if (kind === 'oxytocin') patient.oxytocinRunning = true;
           await savePatient(patient);
           toast('Recorded ✓');
@@ -389,7 +371,10 @@ export function openMedicationModal(patient) {
     patient.oxytocinRunning ? h('button', {
       class: 'btn ghost', style: 'margin-top:8px', onclick: async () => {
         patient.oxytocinRunning = false;
-        patient.meds.push({ id: uid(), time: new Date().toISOString(), kind: 'oxytocin', detail: 'Oxytocin STOPPED' });
+        patient.meds.push({
+          id: uid(), time: new Date().toISOString(), kind: 'oxytocin', detail: 'Oxytocin STOPPED',
+          action: 'stop', by: S.settings.midwifeName || null,
+        });
         await savePatient(patient);
         toast('Oxytocin marked as stopped');
         closeFn();

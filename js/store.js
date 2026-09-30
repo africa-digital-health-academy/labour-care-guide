@@ -3,7 +3,7 @@
 
 import * as db from './db.js';
 import { setLang } from './i18n.js';
-import { migrateAll } from './migrate.js';
+import { migrateAll, CASE_SCHEMA } from './migrate.js';
 
 export const DEFAULT_SETTINGS = {
   facilityName: '',
@@ -30,7 +30,7 @@ export async function initStore() {
   const { patients: migrated, changed } = migrateAll(patients, settings);
   if (changed) {
     // snapshot the pre-migration shape before anything is overwritten (S11)
-    await db.putBackup('pre-migrate-v2-' + new Date().toISOString(), patients);
+    await db.putBackup(`pre-migrate-v${CASE_SCHEMA}-` + new Date().toISOString(), patients);
     await db.putPatients(migrated);
   }
   S.patients = migrated.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -44,6 +44,9 @@ export function patientById(id) {
 }
 
 export async function savePatient(p) {
+  // Second guard behind record.createCase(): every case reaching the store is
+  // current, so an unstamped one is new and must never be re-migrated.
+  if (p.schemaVersion == null) p.schemaVersion = CASE_SCHEMA;
   await db.putPatient(p);
   const i = S.patients.findIndex(x => x.id === p.id);
   if (i >= 0) S.patients[i] = p; else S.patients.unshift(p);

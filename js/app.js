@@ -8,7 +8,7 @@ import { h, clear, beep, toast, eatDate, APP_TZ, unlockAudio } from './ui.js';
 import { t } from './i18n.js';
 import { S, initStore, bus, savePatient } from './store.js';
 import { getProtocol, dueList, isLabouring } from './protocol.js';
-import { evaluateTime, addAlerts } from './alerts.js';
+import { refreshTimeAlerts } from './alerts.js';
 import { formatEthiopic } from './ethiopic.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderAdmission } from './views/admission.js';
@@ -143,13 +143,15 @@ async function tick() {
     if (!isLabouring(p)) continue;
     const proto = getProtocol(S.settings, p);
 
-    // time-based clinical alerts (progress limits, 2nd-stage duration, ROM...)
-    const drafts = evaluateTime(p, S.settings, now);
-    const added = addAlerts(p, drafts, 'time');
-    if (added.length) {
+    // time-based clinical alerts (progress limits, 2nd-stage duration, ROM...):
+    // new ones are raised, cleared ones resolve so a recurrence alerts again (S1)
+    const { added, resolved } = refreshTimeAlerts(p, S.settings, now);
+    if (added.length || resolved.length) {
       changed = true;
-      if (added.some(a => a.severity === 'danger')) dangerBeep = true; else dueBeep = true;
       await savePatient(p);
+    }
+    if (added.length) {
+      if (added.some(a => a.severity === 'danger')) dangerBeep = true; else dueBeep = true;
       toast(`${p.name}: ${added[0].title}`, added.some(a => a.severity === 'danger') ? 'danger' : '');
     }
 
