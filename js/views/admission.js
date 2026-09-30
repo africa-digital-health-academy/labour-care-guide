@@ -4,9 +4,9 @@
 // immediately so referral happens BEFORE labour advances.
 //
 // M3: the baseline records only what was examined or asked (S4, through
-// record.admissionEntries); labour onset, the rupture time or U = unknown and
-// the companion answer are asked, never assumed (F4); every entry carries the
-// initials of the person admitting (F3).
+// record.admissionEntries); labour onset, the presentation, the rupture time
+// or U = unknown and the companion answer are asked, never assumed (F4); every
+// entry carries the initials of the person admitting (F3).
 
 import { h, field, segmented, toast, byField, isoToLocalInput, localInputToISO } from '../ui.js';
 import { t } from '../i18n.js';
@@ -65,6 +65,11 @@ const COMPANION_OPTIONS = [['Y', 'Present'], ['N', 'Wanted, not present'], ['D',
 
 const ONSET_OPTIONS = [{ value: 'spontaneous', label: 'Spontaneous' }, { value: 'induced', label: 'Induced' }];
 const MEMBRANE_OPTIONS = [{ value: 'intact', label: 'Intact' }, { value: 'ruptured', label: 'Ruptured' }];
+// any presentation other than cephalic raises the malpresentation alert
+const PRESENTATION_OPTIONS = [
+  { value: 'cephalic', label: 'Cephalic' }, { value: 'breech', label: 'Breech', alert: true },
+  { value: 'transverse', label: 'Transverse', alert: true }, { value: 'other', label: 'Other', alert: true },
+];
 
 /**
  * A labelled question with no default answer. A <label> forwards a tap on its
@@ -104,7 +109,7 @@ export function renderAdmission() {
     laborOnsetTime: isoToLocalInput(new Date(Date.now() - 2 * 3600000).toISOString()),
     admissionTime: isoToLocalInput(),
     dilatation: null, descent: null, fhr: null, pulse: null,
-    sys: null, dia: null, temp: null, presentation: 'cephalic',
+    sys: null, dia: null, temp: null, presentation: null, // required, never assumed
     contractions: null, companion: null,                // Y | N | D, unset until asked
   };
   let by = '';
@@ -205,32 +210,13 @@ export function renderAdmission() {
         field('BP systolic', input('sys', 'number', { min: 50, max: 260 })),
         field('BP diastolic', input('dia', 'number', { min: 30, max: 160 })),
       ),
-      field('Presentation', segmented([
-        { value: 'cephalic', label: 'Cephalic' }, { value: 'breech', label: 'Breech', alert: true },
-        { value: 'transverse', label: 'Transverse', alert: true }, { value: 'other', label: 'Other', alert: true },
-      ], m.presentation, v => { m.presentation = v; })),
+      choiceField('Presentation *', segmented(PRESENTATION_OPTIONS, m.presentation, v => { m.presentation = v; })),
     ),
     byField(getBy(), v => { by = v; }),
     h('button', { class: 'btn big', onclick: save }, '✓ Admit & start monitoring'),
     h('p', { class: 'muted', style: 'text-align:center' },
       'The monitoring schedule and partograph start automatically from these values.'),
   );
-
-  /** The first missing or impossible answer, or null when the form can be saved. */
-  function problem() {
-    if (!m.name.trim()) return 'Name is required';
-    if (m.gravida == null || m.para == null) return 'Gravida and Para are required';
-    if (!m.onsetMode) return 'Labour onset: choose Spontaneous or Induced';
-    if (!m.membranes) return 'Membranes: choose Intact or Ruptured';
-    if (m.membranes === 'ruptured' && !m.romUnknown) {
-      const rom = localInputToISO(m.romTime);
-      if (!rom) return 'Enter when the membranes ruptured, or tick Time unknown (U)';
-      if (new Date(rom) > new Date()) return 'The rupture time is in the future';
-    }
-    if (m.dilatation == null || m.fhr == null) return 'Admission dilatation and FHR are required';
-    if (!by) return 'Your initials are required';
-    return null;
-  }
 
   /** The new case with its admission entries and alerts (nothing saved yet). */
   function admit() {
@@ -277,7 +263,7 @@ export function renderAdmission() {
 
   async function save() {
     if (saving) return; // a double tap must not admit her twice
-    const why = problem();
+    const why = admissionProblem(m, by);
     if (why) { toast(why, 'danger'); return; }
     saving = true; // stays set once saved: the page is about to be replaced
     let made;
@@ -299,4 +285,25 @@ export function renderAdmission() {
   }
 
   return page;
+}
+
+/**
+ * The first missing or impossible answer on the admission form, or null when
+ * it can be saved. m is the form state, by the initials. No DOM: exported
+ * for the tests.
+ */
+export function admissionProblem(m, by) {
+  if (!m.name.trim()) return 'Name is required';
+  if (m.gravida == null || m.para == null) return 'Gravida and Para are required';
+  if (!m.onsetMode) return 'Labour onset: choose Spontaneous or Induced';
+  if (!m.membranes) return 'Membranes: choose Intact or Ruptured';
+  if (m.membranes === 'ruptured' && !m.romUnknown) {
+    const rom = localInputToISO(m.romTime);
+    if (!rom) return 'Enter when the membranes ruptured, or tick Time unknown (U)';
+    if (new Date(rom) > new Date()) return 'The rupture time is in the future';
+  }
+  if (m.dilatation == null || m.fhr == null) return 'Admission dilatation and FHR are required';
+  if (!m.presentation) return 'Presentation: choose Cephalic, Breech, Transverse or Other';
+  if (!by) return 'Your initials are required';
+  return null;
 }

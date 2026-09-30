@@ -17,7 +17,7 @@ import {
   h, clear, openModal, numpad, stepper, segmented, toast, beep, alertBanner, byField, fmtTime, minutesAgoISO,
 } from './ui.js';
 import { t } from './i18n.js';
-import { getProtocol, lastObs, stageSnapshot } from './protocol.js';
+import { getProtocol, lastObs, birthTime, toMs } from './protocol.js';
 import { FLAG, bloodLossTotal } from './alerts.js';
 import { applyObservations, correctObservation, normalizeValues } from './record.js';
 import { S, savePatient, uid, getBy, setBy } from './store.js';
@@ -281,7 +281,8 @@ function cleanValues(values) {
 // v1 codes with a current equivalent: urine 'nil' is today's Negative
 const LEGACY_CODE = { nil: 'neg' };
 
-function currentCode(step, v) {
+/** A recorded answer in the step's current code: v1's 'nil' shows as 'neg'; a code with no equivalent is kept. */
+export function currentCode(step, v) {
   if (!step || !step.options || step.options.some(o => o.value === v)) return v;
   const next = typeof v === 'string' && own(LEGACY_CODE, v) ? LEGACY_CODE[v] : v;
   return step.options.some(o => o.value === next) ? next : v;
@@ -292,7 +293,7 @@ function currentCode(step, v) {
  * default is added). Fields record.js derives - a contraction's seconds from
  * its band - are left out so they are derived again from the corrected answer.
  */
-function prefillValues(type, prefill) {
+export function prefillValues(type, prefill) {
   const steps = wizardSteps(type);
   const stepOf = k => steps.find(s => s.key === k);
   const src = Object.fromEntries(Object.entries(prefill || {}).filter(([k, v]) => v !== undefined && !k.startsWith('_')));
@@ -332,6 +333,16 @@ const TIME_CHOICES = [
 ];
 
 /**
+ * The "when" choices for a new entry. Once a birth is recorded, a time before
+ * it is not offered; "Just now" always is. Pure.
+ */
+export function timeChoices(birthISO, now = new Date()) {
+  if (!birthISO) return TIME_CHOICES;
+  const birth = toMs(birthISO);
+  return TIME_CHOICES.filter(c => c.value === 0 || toMs(now) - c.value * 60000 >= birth);
+}
+
+/**
  * Open the guided recording flow.
  * types: wizard types to collect, in order (due types are mapped through
  * wizardTypeFor; repeats and unknown types are dropped). onComplete(added
@@ -340,6 +351,7 @@ const TIME_CHOICES = [
  * time: its observation time, by, reason} (initials and reason collected by
  * the caller): the entry's own type only, no time screen, and the finish
  * voids the entry and records the corrected values in its place (S5).
+ * opts.title names the time screen (default "Record now").
  */
 export function openRecordWizard(patient, types, onComplete, opts = {}) {
   const problem = opts.replaces ? correctionProblem(patient, opts.replaces) : null;
@@ -384,10 +396,15 @@ function createSession(patient, types, onComplete, opts) {
 function showTimeScreen(w) {
   clear(w.body);
   const err = errorLine();
+  const birth = birthTime(w.patient);
+  const choices = timeChoices(birth);
+  if (!choices.some(c => c.value === w.offsetMin)) w.offsetMin = 0;
   w.body.append(
-    h('h2', null, t('record_now')),
+    h('h2', null, w.opts.title || t('record_now')),
     h('p', { class: 'wizard-q' }, 'When were these observations made?'),
-    segmented(TIME_CHOICES, w.offsetMin, v => { w.offsetMin = v; }, { big: true }),
+    segmented(choices, w.offsetMin, v => { w.offsetMin = v; }, { big: true }),
+    choices.length < TIME_CHOICES.length ? h('p', { class: 'muted' },
+      `Earlier times are not offered: they are before the recorded birth time (${fmtTime(birth)}).`) : null,
     byField(w.by, v => { w.by = v; err.textContent = ''; }),
     err,
     h('div', { class: 'wizard-nav' },
@@ -512,27 +529,11 @@ async function saveEntry(w, clean) {
 
 async function saveCorrection(w, clean) {
   const { patient, opts } = w;
-  const before = stageSnapshot(patient);
   const r = await commit(patient, () => correctObservation(patient, opts.replaces, clean[w.list[0]], S.settings,
     { by: w.by, reason: opts.reason, time: w.time }));
   setBy(w.by);
-  return { added: r.added, transitions: stageChanges(before, stageSnapshot(patient)), message: 'Entry corrected' };
-}
-
-/**
- * Net stage change across a correction. record.js reports the void and the
- * re-entry separately, so a 10 cm exam corrected to 9 cm shows its revert
- * only in the void half, and a revert-then-restart at the same time is no change.
- */
-function stageChanges(before, after) {
-  const out = [];
-  for (const [key, name] of [['activeStartTime', 'active'], ['secondStageStart', 'second']]) {
-    const was = before[key], now = after[key];
-    if (!was && now) out.push(name);
-    else if (was && !now) out.push(name + '_reverted');
-    else if (was && now && was !== now) out.push(name + '_moved');
-  }
-  return out;
+  // r.transitions is the net stage change of the void and the re-entry together
+  return { added: r.added, transitions: r.transitions, message: 'Entry corrected' };
 }
 
 // --------------------------------------------------------------- saving ----

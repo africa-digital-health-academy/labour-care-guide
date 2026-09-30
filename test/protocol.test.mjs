@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getProtocol, dueList, lineStatus } from '../js/protocol.js';
+import { getProtocol, dueList, lineStatus, babyWatched } from '../js/protocol.js';
 import { NOW, iso, mkPatient } from './helpers.mjs';
 
 test('LCG: FHR every 30 min is overdue after 60 min; exam every 4 h is overdue after 5 h', () => {
@@ -46,4 +46,12 @@ test('getProtocol falls back to protocolOverride when protocolId is absent, then
   const settings = { protocol: 'ethiopia2021' };
   assert.equal(getProtocol(settings, mkPatient({ protocolOverride: 'lcg' })).id, 'lcg');
   assert.equal(getProtocol(settings, mkPatient()).id, 'ethiopia2021');
+});
+
+test('babyWatched: the baby is watched unless the birth record says stillbirth', () => {
+  assert.equal(babyWatched(mkPatient()), true, 'no birth recorded');
+  assert.equal(babyWatched(mkPatient({ delivery: null })), true);
+  assert.equal(babyWatched(mkPatient({ delivery: { time: iso(1), outcome: 'live' } })), true);
+  assert.equal(babyWatched(mkPatient({ delivery: { time: iso(1), outcome: 'sb_macerated' } })), false);
+  assert.equal(babyWatched(mkPatient({ delivery: { time: iso(1), outcome: 'sb_fresh' } })), false);
 });

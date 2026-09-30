@@ -5,7 +5,8 @@
 // Live parts (S3): the header, the alert strip and the chart body carry
 // data-live, so app.js can refresh them on the heartbeat without re-rendering
 // the page and wiping a form in progress. The summary note form carries
-// data-form="note" and is marked data-saved before it saves.
+// data-form="note" and is marked data-saved while it is empty and before it
+// saves.
 //
 // Corrections are append-only (S5): an entry is voided or corrected with
 // initials and a reason, after a confirmation that states what will change -
@@ -18,10 +19,10 @@ import {
   fmtTime, fmtDT, durationSince, APP_TZ,
 } from '../ui.js';
 import { t } from '../i18n.js';
-import { S, savePatient, removePatient, getBy, setBy } from '../store.js';
+import { S, savePatient, removePatient, getBy, setBy, uid } from '../store.js';
 import {
   LIMITS, getProtocol, dueList, stageOf, isLabouring, awaitingHandover, monitoringStage,
-  inPostpartumWatch, secondStagePushing, birthTime, fmtMin,
+  inPostpartumWatch, secondStagePushing, birthTime, babyWatched, fmtMin,
 } from '../protocol.js';
 import { EMERGENCIES, addAlerts, resolveAlert } from '../alerts.js';
 import { previewVoid, voidObservation, recordEvent } from '../record.js';
@@ -41,6 +42,7 @@ const LABOUR_TYPES = ['baby', 'contractions', 'pulse', 'vitals', 'exam', 'suppor
 // so it is not pre-selected unless it is due.
 const PP_TYPES = ['ppMother', 'ppBaby', 'bloodloss'];
 const PP_DEFAULT = ['ppMother', 'ppBaby'];
+const PP_TITLE = 'Record check';
 
 const TABS = ['chart', 'entries', 'alerts', 'summary', 'referral', 'delivery'];
 
@@ -166,7 +168,7 @@ export function patientHeader(p, now = new Date()) {
     h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px' },
       second && !pushing ? h('button', { class: 'btn', onclick: () => markPushing(p) }, t('pushing')) : null,
       labouring ? h('button', { class: 'btn', onclick: () => pickAndRecord(p, 'labour') }, '📝 ' + t('record_now')) : null,
-      watch ? h('button', { class: 'btn', onclick: () => pickAndRecord(p, 'postpartum') }, 'Record check') : null,
+      watch ? h('button', { class: 'btn', onclick: () => pickAndRecord(p, 'postpartum') }, PP_TITLE) : null,
       labouring || watch ? h('button', { class: 'btn secondary', onclick: () => openMedicationModal(p) }, '💊 Meds') : null,
       h('button', { class: 'btn danger', onclick: () => openEmergencyModal(p) }, '🚨 ' + t('emergency')),
       labouring || watch || stageOf(p) === 'third' ? h('button', { class: 'btn warn', onclick: go('referral') }, '🏥 ' + t('referral')) : null,
@@ -178,7 +180,8 @@ export function patientHeader(p, now = new Date()) {
 function dueChip(p, d) {
   return h('button', {
     type: 'button', class: 'chip ' + (d.state === 'overdue' ? 'overdue' : 'due'), style: 'border:none;cursor:pointer',
-    onclick: () => openRecordWizard(p, [wizardTypeFor(d.type)]),
+    // in the postpartum watch the time screen is titled like its "Record check" button
+    onclick: () => openRecordWizard(p, [wizardTypeFor(d.type)], null, isLabouring(p) ? {} : { title: PP_TITLE }),
   }, `▶ ${t(d.type)} ${d.state === 'overdue' ? d.overdueMin + '′ ' + t('overdue') : t('due')}`);
 }
 
@@ -212,15 +215,25 @@ async function markPushing(p) {
 }
 
 /**
+ * The types "Record now" ('labour') or "Record check" ('postpartum') offers:
+ * oxytocin while it runs; no baby check after a stillbirth. Pure: exported
+ * for the tests.
+ */
+export function recordTypes(p, kind) {
+  if (kind === 'labour') return p.oxytocinRunning ? [...LABOUR_TYPES, 'oxytocin'] : LABOUR_TYPES;
+  return PP_TYPES.filter(type => type !== 'ppBaby' || babyWatched(p));
+}
+
+/**
  * Choose what to record now ('labour' or 'postpartum'). Items due now are
  * pre-selected (postpartum BP and urine belong to the mother check);
- * otherwise every labour item, or the mother and baby checks.
+ * otherwise every labour item, or the mother (and baby) checks.
  */
 function pickAndRecord(p, kind) {
   const labour = kind === 'labour';
-  const all = !labour ? PP_TYPES : p.oxytocinRunning ? [...LABOUR_TYPES, 'oxytocin'] : LABOUR_TYPES;
-  const fallback = labour ? all : PP_DEFAULT;
-  const title = labour ? t('record_now') : 'Record check';
+  const all = recordTypes(p, kind);
+  const fallback = labour ? all : PP_DEFAULT.filter(type => all.includes(type));
+  const title = labour ? t('record_now') : PP_TITLE;
   const pending = dueList(p, getProtocol(S.settings, p), new Date()).filter(d => d.state !== 'ok');
   const dueFor = type => pending.find(d => wizardTypeFor(d.type) === type); // most urgent first
   const dueTypes = all.filter(dueFor);
@@ -246,7 +259,7 @@ function pickAndRecord(p, kind) {
         class: 'btn', onclick: () => {
           close();
           const order = all.filter(x => selected.has(x));
-          if (order.length) openRecordWizard(p, order);
+          if (order.length) openRecordWizard(p, order, null, { title });
         },
       }, t('next') + ' →'),
     ),
@@ -613,7 +626,7 @@ export function openEmergencyModal(p) {
   }
 
   function detail(e) {
-    let by = '';
+    let by = '', busy = false;
     const err = h('p', { class: 'muted', style: 'color:var(--c-danger);min-height:1.2em' }, '');
     clear(body);
     body.append(
@@ -629,15 +642,20 @@ export function openEmergencyModal(p) {
               err.textContent = 'Your initials are required.';
               return;
             }
+            if (busy) return; // a double tap must not declare the emergency twice
+            busy = true;
             const at = new Date().toISOString();
             const done = await commit(p, () => {
               const added = addAlerts(p, [{ code: 'emg_' + e.code, severity: 'danger', title: 'EMERGENCY: ' + e.label, advice: e.advice }],
                 'manual', { time: at, raisedAt: at });
               for (const a of added) if (!a.by) a.by = by;
               p.notes = [...(p.notes || []),
-                { time: at, by, text: 'Emergency declared: ' + e.label, plan: 'emergency management + referral assessment' }];
+                { id: uid(), time: at, by, text: 'Emergency declared: ' + e.label, plan: 'emergency management + referral assessment' }];
             });
-            if (!done) return;
+            if (!done) {
+              busy = false;
+              return;
+            }
             setBy(by);
             close();
             toast('Emergency recorded', 'danger');
@@ -685,7 +703,7 @@ function admissionCard(p) {
     kv('Admitted', fmtDT(a.time)),
     kv('Labour onset', onset),
     kv('Membranes / ROM', rom),
-    kv('Admission exam', `${a.dilatation ?? '—'} cm · descent ${a.descent ?? '—'}/5 · FHR ${a.fhr ?? '—'} · ${a.presentation || ''}`),
+    kv('Admission exam', admissionExamText(a)),
     kv('Active first stage from', p.activeStartTime ? fmtDT(p.activeStartTime) : 'Not reached'),
     p.secondStageStart ? kv('Second stage from', fmtDT(p.secondStageStart)) : null,
     pushing ? kv('Pushing began', fmtDT(pushing)) : null,
@@ -694,6 +712,12 @@ function admissionCard(p) {
     kv('Contact', [p.phone, p.kebele].filter(Boolean).join(' · ') || '—'),
     kv('Protocol', getProtocol(S.settings, p).name),
   );
+}
+
+/** The admission exam in one line; descent and presentation only when recorded. Pure: exported for the tests. */
+export function admissionExamText(a) {
+  return join([`${a.dilatation ?? '—'} cm`, has(a.descent) ? `descent ${a.descent}/5` : null,
+    `FHR ${a.fhr ?? '—'}`, has(a.presentation) ? a.presentation : null]);
 }
 
 const pct = r => (r == null ? '-' : `${Math.round(r * 100)}%`);
@@ -737,13 +761,21 @@ function auditCard(p, now) {
   return card;
 }
 
-/** Add-note form: a form in progress (data-form="note"), initials required (F3). */
+/**
+ * Add-note form (data-form="note"), initials required (F3). Empty, it holds
+ * nothing to lose: it is marked saved until something is typed, so the
+ * Summary tab keeps refreshing.
+ */
 function noteForm(p) {
-  let by = '';
-  const noteText = h('textarea', { placeholder: 'Assessment / findings…' });
-  const notePlan = h('textarea', { placeholder: 'Plan (shared with the woman)…' });
+  let by = '', busy = false;
+  const typed = () => {
+    if (noteText.value.trim() || notePlan.value.trim()) delete form.dataset.saved;
+    else form.dataset.saved = '1';
+  };
+  const noteText = h('textarea', { placeholder: 'Assessment / findings…', oninput: typed });
+  const notePlan = h('textarea', { placeholder: 'Plan (shared with the woman)…', oninput: typed });
   const err = h('p', { class: 'muted', style: 'color:var(--c-danger);min-height:1.2em' }, '');
-  const form = h('div', { 'data-form': 'note' },
+  const form = h('div', { 'data-form': 'note', 'data-saved': '1' },
     h('h3', null, 'Add note'),
     noteText, notePlan,
     byField(getBy(), v => { by = v; }),
@@ -759,20 +791,47 @@ function noteForm(p) {
           err.textContent = 'Your initials are required.';
           return;
         }
+        if (busy) return; // a double tap must not save the note twice
+        busy = true;
         form.dataset.saved = '1'; // before the save: the re-render it triggers may replace this form
         const done = await commit(p, () => {
-          p.notes = [...(p.notes || []), { time: new Date().toISOString(), by, text, plan }];
+          p.notes = [...(p.notes || []), { id: uid(), time: new Date().toISOString(), by, text, plan }];
         });
+        busy = false;
         if (!done) {
           delete form.dataset.saved; // not saved: the typed note stays protected
           return;
         }
+        // if the page is kept, the saved note is not offered for saving again
+        noteText.value = '';
+        notePlan.value = '';
+        err.textContent = '';
         setBy(by);
         toast('Note saved ✓');
       },
     }, t('save')),
   );
   return form;
+}
+
+/** Close the case with initials (F3): it leaves the active list; the record stays. */
+async function closeCase(p) {
+  const watching = inPostpartumWatch(p, new Date());
+  const r = await promptDialog({
+    title: 'Close case',
+    message: 'Close this case? It moves out of the active list but stays in records/reports.'
+      + (watching ? ' She is still in the postpartum watch: closing stops its checks and reminders.' : ''),
+    by: getBy(), okLabel: 'Close case',
+  });
+  if (!r) return;
+  const done = await commit(p, () => {
+    p.status = 'closed';
+    p.closedAt = new Date().toISOString();
+    p.closedBy = r.by;
+  });
+  if (!done) return;
+  setBy(r.by);
+  location.hash = '#/';
 }
 
 function caseActions(p) {
@@ -782,14 +841,8 @@ function caseActions(p) {
     h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
       h('button', { class: 'btn secondary', onclick: () => downloadFHIR(p, S.settings) }, '⇩ Export FHIR R4 (JSON)'),
       h('button', { class: 'btn secondary', onclick: () => window.print() }, '🖨 Print summary'),
-      !isLabouring(p) && p.status !== 'closed' ? h('button', {
-        class: 'btn secondary', onclick: async () => {
-          const watching = inPostpartumWatch(p, new Date());
-          const msg = 'Close this case? It moves out of the active list but stays in records/reports.'
-            + (watching ? ' She is still in the postpartum watch: closing stops its checks and reminders.' : '');
-          if (await confirmDialog(msg) && await commit(p, () => { p.status = 'closed'; })) location.hash = '#/';
-        },
-      }, 'Close case') : null,
+      !isLabouring(p) && p.status !== 'closed'
+        ? h('button', { class: 'btn secondary', onclick: () => closeCase(p) }, 'Close case') : null,
       // S5: only a DEMO case can be deleted; a real case is closed, never deleted
       demo ? h('button', {
         class: 'btn ghost', style: 'color:var(--c-danger)', onclick: async () => {

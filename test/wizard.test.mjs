@@ -3,7 +3,9 @@
 // N4), and only defaults the midwife never touched are reported as defaulted.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { WIZARD_TYPES, wizardTypeFor, computeDefaulted, wizardSteps } from '../js/wizard.js';
+import {
+  WIZARD_TYPES, wizardTypeFor, computeDefaulted, wizardSteps, prefillValues, currentCode, timeChoices,
+} from '../js/wizard.js';
 import { PROTOCOLS, dueList } from '../js/protocol.js';
 import { NOW, iso, mkPatient } from './helpers.mjs';
 
@@ -126,4 +128,33 @@ test('every step has a unique key, and every default is one of its own options',
     }
   }
   assert.deepEqual(wizardSteps('event'), []);
+});
+
+// ------------------------------------------ M3 review pass 1 regressions ----
+
+test('prefillValues: a correction drops the seconds derived from the band, keeps a v1 duration without one', () => {
+  assert.deepEqual(prefillValues('contractions', { count: 3, durBand: 'gt60', duration: 70 }), { count: 3, durBand: 'gt60' });
+  assert.deepEqual(prefillValues('contractions', { count: 3, duration: 45 }), { count: 3, duration: 45 });
+  assert.deepEqual(prefillValues('baby', { fhr: 140, decel: undefined, _time: 'x' }), { fhr: 140 });
+});
+
+test('prefillValues and currentCode: v1 urine nil is shown as neg; a code with no equivalent is kept', () => {
+  assert.deepEqual(prefillValues('vitals', { sys: 120, dia: 80, protein: 'nil', acetone: '+' }),
+    { sys: 120, dia: 80, protein: 'neg', acetone: '+' });
+  assert.equal(currentCode(step('vitals', 'protein'), 'nil'), 'neg');
+  assert.equal(currentCode(step('vitals', 'acetone'), '++'), '++');
+  assert.equal(currentCode(step('exam', 'liquor'), 'M'), 'M', 'ungraded meconium has no current code');
+  assert.equal(currentCode(step('baby', 'fhr'), 140), 140, 'a numpad answer is unchanged');
+  assert.equal(currentCode(undefined, 'x'), 'x');
+});
+
+test('timeChoices: once a birth is recorded no earlier time is offered; Just now always is', () => {
+  const minAgo = m => new Date(+NOW - m * 60000).toISOString();
+  const offered = birth => timeChoices(birth, NOW).map(c => c.value);
+  assert.deepEqual(offered(null), [0, 5, 10, 15, 30, 60]);
+  assert.deepEqual(offered(minAgo(120)), [0, 5, 10, 15, 30, 60]);
+  assert.deepEqual(offered(minAgo(12)), [0, 5, 10]);
+  assert.deepEqual(offered(minAgo(15)), [0, 5, 10, 15], 'an entry at the birth time itself is allowed');
+  assert.deepEqual(offered(minAgo(2)), [0]);
+  assert.deepEqual(offered(minAgo(-5)), [0], 'a birth time ahead of the clock still leaves Just now');
 });

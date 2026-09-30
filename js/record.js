@@ -176,6 +176,31 @@ export function previewVoid(p, obsId, settings, opts = {}) {
   };
 }
 
+// The admission values the case also keeps on p.admission (summary card,
+// indicators, admission risk), by the type of the admission entry holding them.
+const ADMISSION_MIRROR = {
+  baby: ['fhr'],
+  exam: ['dilatation', 'descent', 'presentation'],
+  pulse: ['pulse'],
+  vitals: ['sys', 'dia', 'temp'],
+  supportive: ['companion'],
+};
+
+/**
+ * A corrected admission entry: p.admission shows the corrected values, and a
+ * value the correction no longer records becomes null. The companion answer
+ * also decides whether she wanted a companion (as at admission).
+ */
+function mirrorAdmission(p, type, v) {
+  if (!p.admission || !Object.prototype.hasOwnProperty.call(ADMISSION_MIRROR, type)) return;
+  const next = { ...p.admission };
+  for (const k of ADMISSION_MIRROR[type]) next[k] = v[k] ?? null;
+  p.admission = next;
+  if (type !== 'supportive') return;
+  if (v.companion) p.companionWanted = v.companion !== 'D';
+  else delete p.companionWanted;
+}
+
 /** Correct an entry: void it, then record the corrected values in its place. */
 export function correctObservation(p, obsId, newValues, settings, { by = null, reason = 'Corrected entry', time } = {}) {
   const old = (p.obs || []).find(x => x.id === obsId);
@@ -184,6 +209,8 @@ export function correctObservation(p, obsId, newValues, settings, { by = null, r
   const voided = voidObservation(p, obsId, settings, { by, reason });
   const applied = applyObservations(p, time || old.time, { [old.type]: newValues }, settings,
     { by, source: old.source || 'entry', replaces: obsId });
+  const fresh = applied.obs[0];
+  if (fresh && old.source === 'admission') mirrorAdmission(p, old.type, fresh.v);
   // the net stage change of the whole correction: the void half alone would
   // report a reversion, the re-entry half alone nothing
   return { voided, ...applied, transitions: transitions(before, stageSnapshot(p)) };
@@ -221,7 +248,7 @@ export function applyReferral(p, referral, { by = null } = {}) {
   p.status = 'referred';
   const reasons = (referral.reasons || []).join(', ');
   p.notes = [...(p.notes || []),
-    { time: referral.time, by, text: `REFERRED to ${referral.facility || 'hospital'}: ${reasons}`, plan: 'referral' }];
+    { id: uid(), time: referral.time, by, text: `REFERRED to ${referral.facility || 'hospital'}: ${reasons}`, plan: 'referral' }];
   return p.referral;
 }
 

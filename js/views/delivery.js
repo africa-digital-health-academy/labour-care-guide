@@ -52,6 +52,16 @@ const LOSS_METHODS = [
   { value: 'estimate', label: 'Visual estimate' },
 ];
 
+// Facts the birth record holds only once answered: nothing is pre-selected,
+// so an untouched form can never record a complete placenta or an intact
+// perineum nobody checked.
+const BIRTH_ANSWERS = [
+  ['mode', 'mode of birth'],
+  ['resus', 'resuscitation'],
+  ['placentaComplete', 'placenta complete'],
+  ['perineum', 'perineum'],
+];
+
 // Due chips age with the clock, and the app's tick redraws only the header.
 const WATCH_REFRESH_MS = 30000;
 
@@ -121,11 +131,12 @@ async function commit(p, change) {
 // ---------------------------------------------------------- birth form -----
 
 function birthForm(p) {
+  // mode, resus, placentaComplete and perineum stay unset until answered (BIRTH_ANSWERS)
   const m = {
-    time: isoToLocalInput(), mode: 'svd', outcome: 'live', sbTiming: null, sbChosen: false,
-    sex: null, weightG: null, resus: 'N', resusDetail: '',
-    apgar1: {}, apgar5: {}, enc: {}, amtsl: {}, placentaComplete: 'Y',
-    eblMl: null, perineum: 'intact', ppSys: null, ppDia: null, ppPulse: null,
+    time: isoToLocalInput(), mode: null, outcome: 'live', sbTiming: null, sbChosen: false,
+    sex: null, weightG: null, resus: null, resusDetail: '',
+    apgar1: {}, apgar5: {}, enc: {}, amtsl: {}, placentaComplete: null,
+    eblMl: null, perineum: null, ppSys: null, ppDia: null, ppPulse: null,
   };
   let by = '';
   let saving = false;
@@ -158,7 +169,7 @@ function birthForm(p) {
       h('h2', null, '👶 Birth'),
       h('div', { class: 'grid2' },
         field('Time of birth', h('input', { type: 'datetime-local', value: m.time, oninput: e => { m.time = e.target.value; } })),
-        field('Mode of birth', segmented(modes, m.mode, v => { m.mode = v; })),
+        field('Mode of birth *', segmented(modes, m.mode, v => { m.mode = v; })),
       ),
       field('Outcome', segmented([
         { value: 'live', label: 'Live birth' },
@@ -170,7 +181,7 @@ function birthForm(p) {
         field('Sex', segmented([{ value: 'M', label: 'Boy' }, { value: 'F', label: 'Girl' }], m.sex, v => { m.sex = v; })),
         field('Birth weight (grams)', numInput('weightG')),
       ),
-      field('Resuscitation needed?', segmented([{ value: 'N', label: t('no') }, { value: 'Y', label: t('yes'), alert: true }], m.resus, v => { m.resus = v; })),
+      field('Resuscitation needed? *', segmented([{ value: 'N', label: t('no') }, { value: 'Y', label: t('yes'), alert: true }], m.resus, v => { m.resus = v; })),
       h('label', { class: 'field' }, h('span', null, 'Resuscitation actions (if any)'),
         h('input', { type: 'text', placeholder: 'e.g. bag & mask ventilation 2 min', oninput: e => { m.resusDetail = e.target.value; } })),
     ),
@@ -184,9 +195,9 @@ function birthForm(p) {
       h('h2', null, 'Third stage — AMTSL'),
       checklist(AMTSL_STEPS, m.amtsl),
       h('div', { class: 'grid2', style: 'margin-top:10px' },
-        field('Placenta complete?', segmented([{ value: 'Y', label: t('yes') }, { value: 'N', label: t('no'), alert: true }], m.placentaComplete, v => { m.placentaComplete = v; })),
+        field('Placenta complete? *', segmented([{ value: 'Y', label: t('yes') }, { value: 'N', label: t('no'), alert: true }], m.placentaComplete, v => { m.placentaComplete = v; })),
         field('Estimated blood loss (ml)', numInput('eblMl')),
-        field('Perineum', segmented([
+        field('Perineum *', segmented([
           { value: 'intact', label: 'Intact' }, { value: 'tear12', label: '1st/2nd° tear' },
           { value: 'tear34', label: '3rd/4th° tear', alert: true }, { value: 'episiotomy', label: 'Episiotomy' },
         ], m.perineum, v => { m.perineum = v; })),
@@ -229,10 +240,15 @@ function birthForm(p) {
   return root;
 }
 
-/** The first missing or impossible answer on the birth form, or null. */
-function birthProblem(m, time, by) {
+/**
+ * The first missing or impossible answer on the birth form, or null. The
+ * unanswered facts are named together. No DOM: exported for the tests.
+ */
+export function birthProblem(m, time, by) {
   if (!time) return 'Enter the time of birth';
   if (new Date(time) > new Date()) return 'The time of birth is in the future';
+  const missing = BIRTH_ANSWERS.filter(([key]) => m[key] == null).map(([, label]) => label);
+  if (missing.length) return 'Still to answer: ' + missing.join(', ');
   if (m.outcome === 'live' && (m.apgar1.total == null || m.apgar5.total == null)) return 'Record APGAR at 1 and 5 minutes';
   if (!by) return 'Your initials are required';
   return null;
@@ -562,7 +578,7 @@ function watchChips(p, onDone) {
     .filter(d => live || d.type !== 'ppBaby') // no baby checks after a stillbirth
     .map(d => h('button', {
       type: 'button', class: 'chip pp' + (d.state === 'ok' ? '' : ' ' + d.state), style: 'border:none;cursor:pointer',
-      onclick: () => openRecordWizard(p, [wizardTypeFor(d.type)], onDone),
+      onclick: () => openRecordWizard(p, [wizardTypeFor(d.type)], onDone, { title: 'Record check' }),
     }, chipLabel(d)));
 }
 

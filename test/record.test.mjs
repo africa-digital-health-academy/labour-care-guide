@@ -244,3 +244,81 @@ test('correcting a mistyped 10 cm exam reports the net stage change of the whole
   const eight = applyObservations(q, iso(1), { exam: { dilatation: 8 } }, LCG).obs[0];
   assert.deepEqual(correctObservation(q, eight.id, { dilatation: 10 }, LCG, { reason: 'typo' }).transitions, ['second']);
 });
+
+// ------------------------------------------ M3 review pass 1 regressions ----
+
+test('correcting 10 cm to 10 cm with another field changed reports no stage change', () => {
+  const p = latent();
+  applyObservations(p, iso(4), { exam: { dilatation: 6 } }, LCG);
+  const ten = applyObservations(p, iso(1), { exam: { dilatation: 10, descent: 1 } }, LCG).obs[0];
+  const r = correctObservation(p, ten.id, { dilatation: 10, descent: 0 }, LCG, { by: 'TE', reason: 'descent mistyped' });
+  assert.deepEqual(r.transitions, []);
+  assert.equal(p.secondStageStart, iso(1));
+  assert.equal(p.status, 'second');
+});
+
+test('a correction that moves the entry in time reports the stage start it moves', () => {
+  const p = latent();
+  applyObservations(p, iso(4), { exam: { dilatation: 6 } }, LCG);
+  const ten = applyObservations(p, iso(1), { exam: { dilatation: 10 } }, LCG).obs[0];
+  const r = correctObservation(p, ten.id, { dilatation: 10 }, LCG, { reason: 'wrong time', time: iso(2) });
+  assert.deepEqual(r.transitions, ['second_moved']);
+  assert.equal(p.secondStageStart, iso(2));
+  const q = latent();
+  const five = applyObservations(q, iso(4), { exam: { dilatation: 5 } }, LCG).obs[0];
+  const s = correctObservation(q, five.id, { dilatation: 5 }, LCG, { reason: 'wrong time', time: iso(3) });
+  assert.deepEqual(s.transitions, ['active_moved']);
+  assert.equal(q.activeStartTime, iso(3));
+});
+
+test('a corrected entry keeps its source and names the entry it replaces, also when corrected again', () => {
+  const p = latent();
+  const adm = applyObservations(p, iso(6), { baby: { fhr: 104 } }, LCG, { by: 'AB', source: 'admission' }).obs[0];
+  const first = correctObservation(p, adm.id, { fhr: 140 }, LCG, { by: 'TE', reason: 'typo' }).obs[0];
+  assert.deepEqual([first.source, first.replaces, first.time, first.by], ['admission', adm.id, adm.time, 'TE']);
+  const second = correctObservation(p, first.id, { fhr: 142 }, LCG, { by: 'TE', reason: 'typo again' }).obs[0];
+  assert.deepEqual([second.source, second.replaces], ['admission', first.id]);
+  const routine = applyObservations(p, iso(2), { baby: { fhr: 150 } }, LCG).obs[0];
+  assert.equal(correctObservation(p, routine.id, { fhr: 151 }, LCG, { reason: 'typo' }).obs[0].source, 'entry');
+});
+
+test('correcting an admission entry mirrors the corrected values into p.admission', () => {
+  const p = createCase({
+    id: 'a1', createdAt: iso(6), protocolId: 'lcg', para: 0, status: 'latent', companionWanted: false,
+    admission: {
+      time: iso(6), dilatation: 4, descent: 3, fhr: 104, pulse: 88, sys: 120, dia: 80, temp: null,
+      presentation: 'breech', companion: 'D', by: 'AB',
+    },
+  });
+  const baseline = admissionEntries({
+    fhr: 104, pulse: 88, sys: 120, dia: 80, dilatation: 4, descent: 3, presentation: 'breech',
+    membranes: 'intact', companion: 'D',
+  });
+  applyObservations(p, iso(6), baseline, LCG, { by: 'AB', source: 'admission' });
+  const entry = type => p.obs.find(o => o.type === type && !o.voided);
+  const fix = (type, v) => correctObservation(p, entry(type).id, v, LCG, { by: 'TE', reason: 'typo' });
+  fix('baby', { fhr: 140 });
+  fix('exam', { dilatation: 5, presentation: 'cephalic', liquor: 'I' });
+  fix('pulse', { pulse: 92 });
+  fix('vitals', { sys: 124, dia: 82, temp: 37.1 });
+  fix('supportive', { companion: 'Y' });
+  assert.deepEqual(p.admission, {
+    time: iso(6), dilatation: 5, descent: null, fhr: 140, pulse: 92, sys: 124, dia: 82, temp: 37.1,
+    presentation: 'cephalic', companion: 'Y', by: 'AB',
+  }, 'a descent the correction no longer records is cleared');
+  assert.equal(p.companionWanted, true);
+  fix('supportive', { painRelief: 'Y' });
+  assert.equal(p.admission.companion, null);
+  assert.equal(p.companionWanted, undefined, 'no companion answer left: her wish is not recorded');
+  // a routine entry is not an admission value
+  const later = applyObservations(p, iso(2), { baby: { fhr: 150 } }, LCG).obs[0];
+  correctObservation(p, later.id, { fhr: 170 }, LCG, { reason: 'typo' });
+  assert.equal(p.admission.fhr, 140);
+});
+
+test('S4: a contraction count of 0 is kept; an unexamined descent or presentation is left out', () => {
+  assert.deepEqual(admissionEntries({ fhr: 140, dilatation: 4, contractions: 0 }).contractions, { count: 0 });
+  const e = admissionEntries({ fhr: 140, dilatation: 4, descent: null, membranes: 'intact' });
+  assert.deepEqual(e.exam, { dilatation: 4, liquor: 'I' }, 'no descent, no presentation');
+  assert.equal(admissionEntries({ fhr: 140, dilatation: 4, descent: 0 }).exam.descent, 0, 'descent 0/5 is a finding');
+});
