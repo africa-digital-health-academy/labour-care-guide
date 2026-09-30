@@ -112,8 +112,8 @@ button { font-family: inherit; }
 }
 
 /* ---------- forms ---------- */
-label.field { display: block; margin-bottom: 12px; }
-label.field > span { display: block; font-size: .85rem; color: var(--c-ink-soft); margin-bottom: 4px; font-weight: 600; }
+.field { display: block; margin-bottom: 12px; }
+.field > span { display: block; font-size: .85rem; color: var(--c-ink-soft); margin-bottom: 4px; font-weight: 600; }
 input[type=text], input[type=number], input[type=date], input[type=time],
 input[type=tel], input[type=datetime-local], select, textarea {
   width: 100%; min-height: var(--tap);
@@ -125,8 +125,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--c-primary);
 textarea { min-height: 80px; resize: vertical; }
 
 .seg { display: flex; flex-wrap: wrap; gap: 8px; }
+/* shrinkable: an option alone on its line and wider than the column wraps
+   its label instead of pushing the page sideways (lines break before shrink) */
 .seg button {
-  flex: 1 0 auto; min-height: var(--tap); padding: 8px 14px;
+  flex: 1 1 auto; min-height: var(--tap); padding: 8px 14px;
   border: 1.5px solid var(--c-line); border-radius: 10px;
   background: #fff; color: var(--c-ink); font-size: 1rem; cursor: pointer;
 }
@@ -277,3 +279,115 @@ table.entries th { color: var(--c-ink-soft); font-size: .8rem; }
 .update-chip { background: var(--c-accent); color: var(--c-ink); border: 0; border-radius: 999px; padding: 6px 12px; font-weight: 700; font-size: .85rem; margin-right: 8px; min-height: 36px; }
 /* Stepper showing a previous value that has NOT been committed yet. */
 .stepper .val.hint { color: var(--c-ink-soft); font-weight: 500; }
+
+/* ---- M3 additions: initials, corrections, PPH, postpartum watch, audit ----
+   Class names are the M3 contract; views only apply them. Every text/background
+   pair below measures >= 4.5:1 (WCAG AA). Layouts wrap, so nothing forces a
+   horizontal scroll at 360 px. */
+:root {
+  --c-pp: #6a3d9a;     /* postpartum watch: distinct from labour green and the alert colours */
+  --c-pp-bg: #f3edf9;
+  --c-pp-tint: #f8f4fc;
+}
+
+/* Per-entry initials (F3): "Recording as XX" chip + small "change" button, or the input. */
+.by-field { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 6px 0 12px; }
+.by-field > label.field { flex: 1 1 100%; margin-bottom: 0; }
+.by-field input { max-width: 10em; text-transform: uppercase; letter-spacing: .05em; }
+.by-field input::placeholder { text-transform: none; letter-spacing: normal; }
+.by-field .btn.ghost { padding: 4px 10px; font-size: .9rem; font-weight: 600; text-decoration: underline; }
+
+/* Entries: a voided row stays on record, struck through and muted (S5). The
+   initials / "voided by" line (.entry-by) and the row buttons stay unstruck:
+   an inline-block escapes the parent's line-through. Never flex/inline-block
+   a table cell: the td variants only lift the decoration. */
+.entries tr.voided td { text-decoration: line-through; color: var(--c-ink-soft); }
+.entries tr.voided td.entry-by,
+.entries tr.voided td.entry-actions { text-decoration: none; }
+.entries tr.voided .entry-by:not(td) { display: inline-block; }
+.entry-by { font-size: .78rem; font-weight: 600; color: var(--c-ink-soft); letter-spacing: .02em; }
+.entry-actions:not(td) { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.entry-actions .btn { min-height: 40px; padding: 4px 12px; font-size: .85rem; border-radius: 10px; white-space: nowrap; }
+td.entry-actions .btn { margin: 2px 6px 2px 0; }
+
+/* A closed alert nobody acknowledged: muted and dashed, clearly not live. */
+.alert-closed,
+.alert-banner.alert-closed {
+  background: var(--c-bg); color: var(--c-ink-soft);
+  border: 1.5px dashed #9aaba6; border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 10px; box-shadow: none;
+}
+
+/* PPH card (delivery tab): running blood-loss total against both triggers. */
+.pph-card {
+  background: var(--c-card); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 16px; margin-bottom: 14px; border-top: 5px solid var(--c-danger);
+}
+.pph-total { font-size: 2.6rem; font-weight: 800; line-height: 1.1; margin: 4px 0; color: var(--c-ink); font-variant-numeric: tabular-nums; }
+.pph-total small, .pph-total .unit { font-size: 1rem; font-weight: 600; color: var(--c-ink-soft); margin-left: 4px; }
+/* Trigger met: solid banner, white on danger red = 5.6:1. */
+.pph-trigger,
+.alert-banner.pph-trigger {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--c-danger); color: #fff; border: 1.5px solid var(--c-danger);
+  border-radius: var(--radius); padding: 12px 14px; margin: 10px 0;
+  font-size: 1.05rem; font-weight: 700; line-height: 1.35;
+}
+.pph-trigger .muted { color: #fff; }
+.pph-trigger a { color: #fff; }
+.pph-trigger .btn { background: #fff; color: var(--c-danger); border-color: #fff; }
+
+/* PPH first-response bundle: one row per step, long labels wrap beside the box. */
+.bundle { margin: 8px 0 0; padding: 0; list-style: none; }
+.bundle > label, .bundle > li {
+  display: flex; align-items: flex-start; gap: 12px;
+  min-height: var(--tap); padding: 10px 0; border-bottom: 1px solid var(--c-line);
+  font-size: 1rem; line-height: 1.35;
+}
+.bundle input[type=checkbox] { flex: 0 0 auto; width: 26px; height: 26px; margin: 0; accent-color: var(--c-primary); }
+.bundle > label > span, .bundle > li > span { min-width: 0; overflow-wrap: anywhere; }
+.bundle > label > span:first-of-type, .bundle > li > span:first-of-type { flex: 1 1 auto; }
+.bundle input[type=checkbox]:checked + span { color: var(--c-ok); }
+
+/* Postpartum watch (N4): violet accent on cards and sections. Alert colours
+   win on a board card: has-danger / has-warn outrank this rule. */
+.pp-watch { border-left: 6px solid var(--c-pp); }
+.pp-watch:not(.card):not(.pt-card) { border-left-width: 4px; padding-left: 10px; }
+.pp-watch > h2, .pp-watch > h3 { color: var(--c-pp); }
+.pt-card.pp-watch:not(.has-danger):not(.has-warn) { background: var(--c-pp-tint); }
+.chip.pp { background: var(--c-pp-bg); color: var(--c-pp); box-shadow: inset 0 0 0 1px rgba(106, 61, 154, .35); }
+
+/* LCG completeness / audit card: label left, value right. */
+.audit-card {
+  background: var(--c-card); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 16px; margin-bottom: 14px;
+}
+/* headings match .card whether or not the view also adds the card class */
+.audit-card h2, .pph-card h2 { margin: 0 0 10px; font-size: 1.05rem; color: var(--c-primary-dark); }
+.audit-card h3, .pph-card h3 { margin: 14px 0 6px; font-size: .95rem; color: var(--c-ink-soft); }
+.audit-row:not(tr) {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  padding: 7px 0; border-bottom: 1px solid var(--c-line); font-size: .95rem;
+}
+.audit-row:last-child { border-bottom: none; }
+.audit-row:not(tr) > :first-child { flex: 1 1 auto; min-width: 0; color: var(--c-ink-soft); overflow-wrap: break-word; }
+.audit-row:not(tr) > :last-child:not(:first-child) { flex: 0 0 auto; max-width: 55%; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: break-word; }
+tr.audit-row > td { padding: 7px 0; border-bottom: 1px solid var(--c-line); }
+tr.audit-row > td:last-child:not(:first-child) { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 480px) {
+  /* one field per row: a datetime-local input or a segmented choice cannot
+     share 360 px (two columns pushed the birth and admission forms sideways) */
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+  table.entries { font-size: .82rem; }
+  table.entries th, table.entries td { padding: 6px 3px; }
+  .entry-actions .btn { padding: 4px 8px; }
+  .pph-total { font-size: 2.2rem; }
+}
+
+@media print {
+  .entry-actions { display: none !important; }
+  /* backgrounds do not print by default: white-on-red would vanish */
+  .pph-trigger, .alert-banner.pph-trigger { background: none; color: var(--c-danger); border: 2px solid var(--c-danger); }
+  .pph-trigger .muted, .pph-trigger a { color: var(--c-danger); }
+}

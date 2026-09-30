@@ -180,10 +180,13 @@ export function previewVoid(p, obsId, settings, opts = {}) {
 export function correctObservation(p, obsId, newValues, settings, { by = null, reason = 'Corrected entry', time } = {}) {
   const old = (p.obs || []).find(x => x.id === obsId);
   if (!old) throw new Error('Entry not found');
+  const before = stageSnapshot(p);
   const voided = voidObservation(p, obsId, settings, { by, reason });
   const applied = applyObservations(p, time || old.time, { [old.type]: newValues }, settings,
     { by, source: old.source || 'entry', replaces: obsId });
-  return { voided, ...applied };
+  // the net stage change of the whole correction: the void half alone would
+  // report a reversion, the re-entry half alone nothing
+  return { voided, ...applied, transitions: transitions(before, stageSnapshot(p)) };
 }
 
 /**

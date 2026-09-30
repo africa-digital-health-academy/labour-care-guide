@@ -232,3 +232,15 @@ test('S4: intact membranes, a chosen fluid colour and a companion answer are rec
   assert.deepEqual(e.vitals, { sys: 120, dia: 80 });
   assert.deepEqual(e.pulse, { pulse: 88 });
 });
+
+test('correcting a mistyped 10 cm exam reports the net stage change of the whole correction', () => {
+  const p = latent();
+  applyObservations(p, iso(4), { exam: { dilatation: 6 } }, LCG);
+  const ten = applyObservations(p, iso(1), { exam: { dilatation: 10 } }, LCG).obs[0];
+  const r = correctObservation(p, ten.id, { dilatation: 9 }, LCG, { by: 'TE', reason: 'typed 10 for 9' });
+  assert.deepEqual(r.transitions, ['second_reverted']);
+  assert.equal(p.status, 'active');
+  const q = latent();
+  const eight = applyObservations(q, iso(1), { exam: { dilatation: 8 } }, LCG).obs[0];
+  assert.deepEqual(correctObservation(q, eight.id, { dilatation: 10 }, LCG, { reason: 'typo' }).transitions, ['second']);
+});

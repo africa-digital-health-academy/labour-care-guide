@@ -323,8 +323,14 @@ export function stepper(initial, onChange, { min = 0, max = 10, unit = '', hint 
   return h('div', { class: 'stepper' }, btn('−', -1), valEl, btn('+', +1));
 }
 
+/**
+ * A labelled control. Only a single form control is wrapped in <label>: a
+ * label around a group of buttons makes a tap on the question text "click"
+ * the first answer, silently recording a value nobody chose.
+ */
 export function field(labelText, inputEl) {
-  return h('label', { class: 'field' }, h('span', null, labelText), inputEl);
+  const single = inputEl && /^(INPUT|SELECT|TEXTAREA)$/.test(inputEl.tagName || '');
+  return h(single ? 'label' : 'div', { class: 'field' }, h('span', null, labelText), inputEl);
 }
 
 export function alertBanner(alert, actions) {

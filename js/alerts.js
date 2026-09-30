@@ -87,6 +87,7 @@ export const FLAG = {
   urine: g => (urineGrade(g) ?? 0) >= LIMITS.urineAlertGrade,
   supportive: (key, val) => (key === 'posture' ? isSupine(val) : val === 'N'),
   bloodLoss: ml => ml != null && ml >= LIMITS.pph.volume,
+  newbornTemp: t => t != null && (t < LIMITS.newbornTemp.low || t >= LIMITS.newbornTemp.high),
 };
 
 // ------------------------------------------------------ shared rule parts --

@@ -55,6 +55,16 @@ const en = {
   companion: 'Companion present',
   alert_review: 'Review needed',
   alert_act: 'ACT NOW',
+  // M3: postpartum watch items (dueList types), blood loss and events.
+  // Amharic for these arrives in M5; until then they fall back to English.
+  ppMother: 'Mother check',
+  ppBaby: 'Baby check',
+  ppBP: 'BP after birth',
+  ppVoid: 'Urine passed',
+  bloodloss: 'Blood loss',
+  event: 'Event',
+  pushing: 'Pushing began',
+  postpartum_watch: 'Postpartum watch',
 };
 
 const am = {

@@ -383,11 +383,18 @@ export function urinePassedSinceBirth(p) {
 
 export const OBS_TYPES = ['baby', 'contractions', 'pulse', 'vitals', 'exam', 'supportive', 'oxytocin'];
 
+/** After a stillbirth there is no baby to check - only the mother is watched. */
+export function babyWatched(p) {
+  const outcome = p.delivery && p.delivery.outcome;
+  return !outcome || outcome === 'live';
+}
+
 /** Assessment intervals (minutes) in force for a case at `now`. */
 export function scheduleFor(p, proto, now = new Date()) {
   if (!isLabouring(p)) {
     const ph = inPostpartumWatch(p, now) ? postpartumPhase(p, now) : null;
-    return ph ? { ppMother: ph.mother, ppBaby: ph.baby } : {};
+    if (!ph) return {};
+    return babyWatched(p) ? { ppMother: ph.mother, ppBaby: ph.baby } : { ppMother: ph.mother };
   }
   const stage = monitoringStage(p);
   const key = stage === 'latent' ? 'latent' : stage === 'second' ? 'second' : 'active';
@@ -431,6 +438,7 @@ export function dueList(p, proto, now = new Date()) {
   } else if (inPostpartumWatch(p, now)) {
     const birth = birthTime(p);
     for (const [type, key] of [['ppMother', 'mother'], ['ppBaby', 'baby']]) {
+      if (type === 'ppBaby' && !babyWatched(p)) continue;
       const last = lastObs(p, type, o => toMs(o.time) >= toMs(birth));
       const from = last ? last.time : birth;
       // the interval of the phase the last check fell in: at a boundary the shorter one wins

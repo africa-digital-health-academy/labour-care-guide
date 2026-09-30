@@ -94,3 +94,13 @@ test('S12: parity keys and the stricter limit for unknown parity', () => {
   assert.equal(byParity({ nulli: 12, multi: 10 }, 'unknown'), 10);
   assert.equal(byParity({ nulli: 180, multi: 120 }, 'nulli'), 180);
 });
+
+test('N4: after a stillbirth only the mother is watched - no baby checks are asked for', () => {
+  const sb = delivered(20);
+  sb.delivery.outcome = 'sb_fresh';
+  const list = due(sb, LCG);
+  assert.equal(item(list, 'ppBaby'), undefined);
+  assert.ok(item(list, 'ppMother'));
+  assert.deepEqual(Object.keys(scheduleFor(sb, PROTOCOLS.lcg, NOW)), ['ppMother']);
+  assert.ok(item(due(delivered(20), LCG), 'ppBaby'), 'a live birth keeps the baby checks');
+});
