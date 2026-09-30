@@ -37,6 +37,14 @@ The screens now feed the M2 engine and keep what the midwife types.
 - The ward board and the alert strip count only open alerts; closed alerts
   still awaiting acknowledgement are shown apart.
 - Phone width: every screen fits 360 px without sideways scrolling.
+- Independent clinical review, two passes. Pass 1 found no critical issue and
+  three to fix before facility use, all fixed: the birth record saved
+  untouched "placenta complete", "perineum intact" and "no resuscitation" as
+  facts; admission recorded an unexamined cephalic presentation; postpartum
+  checks timed before the recorded birth dropped out of the watch. Pass 2
+  verified them and added a remedy note for a birth recorded late, and voided
+  admission entries now clear the admission record.
+- Tests: 297, up from 264.
 
 ## 2.0.0-dev (unreleased) - milestone M2, 30 September 2026
 
