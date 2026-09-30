@@ -142,3 +142,13 @@ test('manual and emergency alerts never auto-resolve; the Resolve button closes 
   assert.equal(a.resolvedBy, 'TE');
   assert.equal(resolveAlert(p, a.id, { by: 'TE' }), null);
 });
+
+test('a re-asked alert shows the new value in its title', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(2), { baby: { fhr: 165 } }, LCG);
+  const a = p.alerts.find(x => x.code === 'fhr_abn');
+  Object.assign(a, { ack: true, action: 'monitoring', actionTime: new Date().toISOString() });
+  const r = applyObservations(p, iso(1), { baby: { fhr: 168 } }, LCG);
+  assert.ok(r.added.includes(a));
+  assert.match(a.title, /168/);
+});

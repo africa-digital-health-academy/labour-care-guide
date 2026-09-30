@@ -649,7 +649,8 @@ export function addAlerts(patient, drafts, source = 'obs', opts = {}) {
         Object.assign(open, { severity: d.severity, title: d.title, advice: d.advice, ack: false, escalatedAt: raisedAt });
         added.push(open);
       } else if (again) {
-        Object.assign(open, { ack: false, reAlertedAt: raisedAt });
+        // re-asked: the banner and the acknowledgement note must show the new value
+        Object.assign(open, { title: d.title, advice: d.advice, ack: false, reAlertedAt: raisedAt });
         added.push(open);
       }
       continue;

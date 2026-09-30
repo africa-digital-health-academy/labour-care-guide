@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.0.0-dev (unreleased) - milestone M4, 1 October 2026
+
+The chart reads like the WHO Labour Care Guide sheet, prints, and the
+reports show the WHO implementation indicators.
+
+- Chart laid out as the WHO sheet (F13, F14): sections in the form's order
+  with the ALERT column generated from the engine's thresholds; 12 columns of
+  active first stage plus a 3-hour second-stage panel and a latent/admission
+  panel with real time spans; X for dilatation and O for descent on its own
+  row; P where pushing began (F2); WHO codes SP/MO, Y/N/D, urine grades and
+  fluid M+ to M+++ (F12); assessment and plan row from the notes; nothing
+  drawn after the birth or from voided entries; FHR beyond the scale labelled.
+- Every alert value is circled in red; a circle turns dashed grey only when
+  the alert was acknowledged after that value was recorded.
+- A repeat abnormal value after an acknowledgement now asks for
+  acknowledgement again, as the WHO form requires for every alert value (the
+  PPH running total asks again only on new bleeding or a new sign).
+- Continuation (F6): a new 12-hour sheet when the active first stage passes
+  12 h, with sheet buttons on screen.
+- Print: A4 landscape, one page per sheet with a header, plus an appendix with
+  every note and medication in full; the rest of the app is hidden on paper.
+- Reports (N1, N2): month picker with the Ethiopian dates, the six WHO
+  indicators with a Robson table and the stillbirth split, the HMIS counts,
+  and two CSV exports (indicators, birth register with protocol, Robson group,
+  LCG score, voided entries and total blood loss) that open cleanly in Excel.
+- A corrected birth can no longer be timed after a postpartum check already
+  recorded; closing a case is rule-checked and tested.
+- Independent clinical review, two passes, and a browser walk of chart, print,
+  continuation, the Ethiopian partograph and reports.
+- Tests: 344, up from 297.
+
 ## 2.0.0-dev (unreleased) - milestone M3, 30 September 2026
 
 The screens now feed the M2 engine and keep what the midwife types.

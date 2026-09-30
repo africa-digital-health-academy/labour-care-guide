@@ -111,7 +111,13 @@ function flagState(idx, o, fields) {
   const codes = [].concat(fields).flatMap(f => ALERT_CODES[f] || []);
   const raised = (idx.get(o.id) || []).filter(a => codes.includes(a.code));
   const made = toMs(o.enteredAt || o.time);
-  return raised.length && raised.every(a => a.actionTime && toMs(a.actionTime) >= made) ? 'ack' : 'open';
+  // an entry is covered when the acknowledgement came after it; while an alert
+  // is re-opened, only entries made before the re-opening count (a tablet clock
+  // set back must never grey a value nobody has acknowledged)
+  const covered = a => (a.ack
+    ? !!a.actionTime && toMs(a.actionTime) >= made
+    : made < toMs(a.reAlertedAt || a.escalatedAt || 0) && !!a.actionTime);
+  return raised.length && raised.every(covered) ? 'ack' : 'open';
 }
 
 /** The circle: solid red while open, dashed grey once acknowledged (not by colour alone). */
