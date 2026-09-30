@@ -5,27 +5,15 @@
 
 import { h, toast, fmtDT, confirmDialog } from '../ui.js';
 import { S, exportBackup, importBackup, initStore, emit } from '../store.js';
+import { hmisCounts, MONITORED_MIN_ENTRIES } from '../indicators.js';
+import { LIMITS } from '../protocol.js';
 
 export function renderReports() {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const inMonth = p => new Date(p.createdAt) >= monthStart;
 
-  const all = S.patients;
-  const month = all.filter(inMonth);
-
-  const stats = list => {
-    const delivered = list.filter(p => p.delivery);
-    const live = delivered.filter(p => p.delivery.outcome === 'live');
-    const sb = delivered.filter(p => p.delivery.outcome !== 'live');
-    const referred = list.filter(p => p.referral);
-    const lowApgar = delivered.filter(p => p.newborn && p.newborn.apgar5 && p.newborn.apgar5.total < 7);
-    const pph = delivered.filter(p => p.delivery.eblMl != null && p.delivery.eblMl >= 500);
-    const monitored = list.filter(p => (p.obs || []).length >= 4);
-    return { n: list.length, delivered: delivered.length, live: live.length, sb: sb.length, referred: referred.length, lowApgar: lowApgar.length, pph: pph.length, monitored: monitored.length };
-  };
-
-  const sm = stats(month), sa = stats(all);
+  // counting rules live in indicators.js (S13): births by birth date, demo cases excluded
+  const sm = hmisCounts(S.patients, { from: monthStart }), sa = hmisCounts(S.patients);
   const row = (label, m, a) => h('tr', null, h('td', null, label), h('td', null, m), h('td', null, a));
 
   return h('div', { class: 'page' },
@@ -34,17 +22,17 @@ export function renderReports() {
       h('table', { class: 'entries' },
         h('thead', null, h('tr', null, h('th', null, 'Indicator'), h('th', null, 'This month'), h('th', null, 'All time'))),
         h('tbody', null,
-          row('Admissions in labour', sm.n, sa.n),
-          row('Births at facility', sm.delivered, sa.delivered),
+          row('Admissions in labour', sm.admissions, sa.admissions),
+          row('Births at facility', sm.births, sa.births),
           row('Live births', sm.live, sa.live),
-          row('Stillbirths', sm.sb, sa.sb),
-          row('APGAR < 7 at 5 min', sm.lowApgar, sa.lowApgar),
-          row('PPH (EBL ≥ 500 ml)', sm.pph, sa.pph),
+          row('Stillbirths', sm.stillbirths, sa.stillbirths),
+          row(`APGAR < ${LIMITS.apgarLow} at 5 min`, sm.lowApgar, sa.lowApgar),
+          row(`PPH (${LIMITS.pph.volume} mL, or ${LIMITS.pph.volumeWithSigns} mL with abnormal signs)`, sm.pph, sa.pph),
           row('Referred out in labour', sm.referred, sa.referred),
-          row('Partograph monitored (≥4 entries)', sm.monitored, sa.monitored),
+          row(`Monitored (${MONITORED_MIN_ENTRIES} or more entries)`, sm.monitored, sa.monitored),
         ),
       ),
-      h('p', { class: 'muted' }, 'These map to the monthly HMIS/DHIS2 delivery-care indicators — copy or export below.'),
+      h('p', { class: 'muted' }, 'These map to the monthly HMIS/DHIS2 delivery-care indicators. Births are counted by date of birth; demo cases are not counted.'),
     ),
     h('div', { class: 'card' },
       h('h2', null, 'Export'),

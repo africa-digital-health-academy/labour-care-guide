@@ -4,20 +4,44 @@
 // working unchanged (fixes S11: v1 had no schema version and no migration at
 // all, so an older backup could silently overwrite newer on-device data).
 
-export const CASE_SCHEMA = 2;
+export const CASE_SCHEMA = 3;
 
 const ENTRY_ARRAYS = ['obs', 'meds', 'notes'];
 
 /**
- * Bring one patient record up to CASE_SCHEMA. Idempotent: a record already at
- * CASE_SCHEMA is returned unchanged, so migrating twice is a no-op.
+ * Bring one patient record up to CASE_SCHEMA, one step at a time. Idempotent:
+ * a record already at CASE_SCHEMA is returned unchanged, so migrating twice
+ * is a no-op. Never mutates its input.
  */
 export function migrateCase(patient, settings) {
-  if ((patient.schemaVersion || 1) >= CASE_SCHEMA) return { p: patient, changed: false };
+  const from = patient.schemaVersion || 1;
+  if (from >= CASE_SCHEMA) return { p: patient, changed: false };
+  let next = { ...patient };
+  if (from < 2) next = toV2(next, settings);
+  if (from < 3) next = toV3(next);
+  next.schemaVersion = CASE_SCHEMA;
+  return { p: next, changed: true };
+}
 
+/**
+ * Schema 3 (M2). A woman referred in labour is now monitored until her
+ * handover is recorded (S8). Referrals made before this rule are treated as
+ * handed over at the referral time - what v1 did - so old cases do not come
+ * back onto the ward board with hours of overdue checks.
+ */
+function toV3(patient) {
+  const r = patient.referral;
+  if (!r || r.handoverAt !== undefined) return patient;
+  return {
+    ...patient,
+    referral: { ...r, handoverAt: r.time || patient.updatedAt || patient.createdAt || null, handoverInferred: true },
+  };
+}
+
+/** Schema 2 (M1): add-only fields for per-case protocol, authorship and episodes. */
+function toV2(patient, settings) {
   const admissionTime = patient.admission && patient.admission.time;
   const next = { ...patient };
-  next.schemaVersion = CASE_SCHEMA;
 
   // S2: a case must remember the protocol it was actually run under, so a
   // later Settings change never retroactively changes women already in labour.
@@ -40,7 +64,7 @@ export function migrateCase(patient, settings) {
   if (next.onsetMode === undefined) next.onsetMode = 'unknown';
   if (next.romUnknown === undefined) next.romUnknown = false;
 
-  return { p: next, changed: true };
+  return next;
 }
 
 /** Migrate a whole patient list; reports whether any record actually changed. */

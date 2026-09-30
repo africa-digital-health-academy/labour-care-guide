@@ -7,7 +7,8 @@ import { h, field, segmented, toast, isoToLocalInput, localInputToISO } from '..
 import { t } from '../i18n.js';
 import { S, savePatient, uid } from '../store.js';
 import { getProtocol } from '../protocol.js';
-import { evaluateObs, addAlerts } from '../alerts.js';
+import { addAlerts, admissionRiskAlerts } from '../alerts.js';
+import { applyObservations } from '../record.js';
 import { showAlertAckModal } from '../wizard.js';
 
 // Country dial codes — Ethiopia (+251) first and default; neighbours and common
@@ -182,41 +183,22 @@ export function renderAdmission() {
     };
     if (m.dilatation >= 10) p.status = 'second';
 
-    // baseline observations so the chart starts populated
-    const baseline = [];
-    baseline.push({ type: 'baby', v: { fhr: m.fhr, decel: 'none', liquor: m.membranes === 'intact' ? 'I' : 'C' } });
-    if (m.contractions != null) baseline.push({ type: 'contractions', v: { count: m.contractions } });
-    if (m.pulse != null) baseline.push({ type: 'pulse', v: { pulse: m.pulse } });
-    if (m.sys != null && m.dia != null) baseline.push({ type: 'vitals', v: { sys: m.sys, dia: m.dia, temp: m.temp } });
-    baseline.push({
-      type: 'exam',
-      v: { dilatation: m.dilatation, descent: m.descent, presentation: m.presentation, liquor: m.membranes === 'intact' ? 'I' : 'C' },
-    });
-    baseline.push({ type: 'supportive', v: { companion: m.companion, painRelief: 'Y', oralFluid: 'Y', posture: 'upright' } });
+    // baseline observations so the chart starts populated. Recording only what
+    // was actually entered (S4) arrives with the admission-form rework in M3.
+    const liquor = m.membranes === 'intact' ? 'I' : 'C';
+    const baseline = { baby: { fhr: m.fhr, decel: 'none', liquor } };
+    if (m.contractions != null) baseline.contractions = { count: m.contractions };
+    if (m.pulse != null) baseline.pulse = { pulse: m.pulse };
+    if (m.sys != null && m.dia != null) baseline.vitals = { sys: m.sys, dia: m.dia, temp: m.temp };
+    baseline.exam = { dilatation: m.dilatation, descent: m.descent, presentation: m.presentation, liquor };
+    baseline.supportive = { companion: m.companion, painRelief: 'Y', oralFluid: 'Y', posture: 'upright' };
 
-    const newAlerts = [];
-    for (const b of baseline) {
-      const obs = { id: uid(), type: b.type, time: admTime, enteredAt: new Date().toISOString(), v: b.v };
-      p.obs.push(obs);
-      const drafts = evaluateObs(p, obs, S.settings);
-      obs.flags = drafts.map(d => d.code);
-      newAlerts.push(...addAlerts(p, drafts, 'obs'));
-    }
+    const by = S.settings.midwifeName || null;
+    const newAlerts = [...applyObservations(p, admTime, baseline, S.settings, { by, source: 'admission' }).added];
 
     // risk factors that should deliver at hospital (CEmONC) level
-    const referAtAdmission = m.riskFactors.filter(r => ['prior_cs', 'multiple', 'malpresentation', 'aph'].includes(r));
-    if (m.presentation !== 'cephalic' && !referAtAdmission.includes('malpresentation')) referAtAdmission.push('malpresentation');
-    if (referAtAdmission.length && S.settings.facilityLevel === 'health_center') {
-      newAlerts.push(...addAlerts(p, [{
-        code: 'admission_risk', severity: 'danger',
-        title: 'High-risk admission — hospital-level birth recommended',
-        advice: [
-          'Risk factors: ' + referAtAdmission.map(r => (RISK_FACTORS.find(x => x[0] === r) || [r, r])[1]).join(', '),
-          'This woman should deliver at a hospital (CEmONC) — refer now unless birth is imminent',
-          'If labour is advanced, prepare for delivery AND alert the referral hospital',
-        ],
-      }], 'obs'));
-    }
+    const labelOf = code => (RISK_FACTORS.find(x => x[0] === code) || [code, code])[1];
+    newAlerts.push(...addAlerts(p, admissionRiskAlerts(p, S.settings, labelOf), 'admission', { time: admTime }));
 
     await savePatient(p);
     toast('Admitted — monitoring schedule started ✓');

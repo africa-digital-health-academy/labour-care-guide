@@ -6,8 +6,13 @@
 //
 // Protocol-aware: Ethiopian mode draws the classic alert + action lines;
 // LCG mode draws per-centimetre "progress limit" windows instead.
+//
+// chartSVG() is pure (no DOM) so it runs in the Node tests; renderChart()
+// wraps it for the page. Voided entries are never drawn (S5). Every "bad"
+// marker uses the alert predicates in alerts.js (S13).
 
-import { getProtocol, exams, timeReachedCurrentDilatation, LIMITS } from './protocol.js';
+import { getProtocol, timeReachedCurrentDilatation, alertLineAnchor, activeObs, byTime, toMs, LIMITS } from './protocol.js';
+import { FLAG, urineGrade, isSupine } from './alerts.js';
 import { APP_TZ } from './ui.js';
 
 const PXH = 64;        // pixels per hour
@@ -34,21 +39,24 @@ const SEC = {
 };
 const HEIGHT = 792;
 
+const LIQUOR_LABEL = { M1: 'M+', M2: 'M++', M3: 'M+++' };
+
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
 
-export function renderChart(patient, settings) {
+/** Pure SVG chart for one case: {svg, width, height, legend}. */
+export function chartSVG(patient, settings, now = new Date()) {
   const proto = getProtocol(settings, patient);
   const anchorISO = (patient.admission && patient.admission.time) || patient.createdAt;
   const anchor = new Date(anchorISO);
-  const now = new Date();
+  const obsAll = activeObs(patient).slice().sort(byTime);
+  const meds = (patient.meds || []).filter(m => !m.voided);
 
-  const allTimes = (patient.obs || []).map(o => +new Date(o.time))
-    .concat((patient.meds || []).map(m => +new Date(m.time)), [+now]);
+  const allTimes = obsAll.map(o => toMs(o.time)).concat(meds.map(m => toMs(m.time)), [+now]);
   const lastT = Math.max(...allTimes, +anchor);
   const hours = Math.max(12, Math.ceil((lastT - anchor) / 3600000) + 1);
   const width = LEFT + hours * PXH + 20;
 
-  const x = t => LEFT + ((new Date(t) - anchor) / 3600000) * PXH;
+  const x = t => LEFT + ((toMs(t) - anchor) / 3600000) * PXH;
   const fhrY = v => SEC.fhr.y + (200 - v) * (SEC.fhr.h / 120);
   const cmY = v => SEC.cervix.y + (10 - v) * (SEC.cervix.h / 10);
   const bpY = v => SEC.pulsebp.y + (180 - Math.min(180, Math.max(60, v))) * (SEC.pulsebp.h / 120);
@@ -113,22 +121,22 @@ export function renderChart(patient, settings) {
     s += `<line x1="${ax}" y1="${SEC.header.y + 14}" x2="${ax}" y2="${SEC.support.y + SEC.support.h}" stroke="#0e7a64" stroke-width="2"/>`;
     s += `<text x="${ax + 3}" y="${SEC.cervix.y - 6}" font-size="9" fill="#0e7a64" font-weight="700" ${FONT}>Active phase</text>`;
 
-    if (proto.alertActionLines) {
-      // alert line: 1 cm/h from activeStartCm → 10 cm
-      const dur = (10 - proto.activeStartCm) * 3600000;
-      const x1 = ax, y1 = cmY(proto.activeStartCm);
-      const x2 = x(new Date(+new Date(patient.activeStartTime) + dur)), y2 = cmY(10);
-      s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#f2a922" stroke-width="2"/>`;
+    const line = alertLineAnchor(proto, patient);
+    if (line) {
+      // alert line: 1 cm/h from the first active dilatation (S7) to 10 cm
+      const x1 = x(line.time), y1 = cmY(line.cm);
+      const x2 = x(new Date(toMs(line.time) + (10 - line.cm) * 3600000)), y2 = cmY(10);
+      s += `<line class="alert-line" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#f2a922" stroke-width="2"/>`;
       s += `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 5}" font-size="9" fill="#b26a00" font-weight="700" ${FONT}>ALERT</text>`;
       const off = proto.actionLineOffsetHours * PXH;
-      s += `<line x1="${x1 + off}" y1="${y1}" x2="${x2 + off}" y2="${y2}" stroke="#c62828" stroke-width="2"/>`;
+      s += `<line class="action-line" x1="${x1 + off}" y1="${y1}" x2="${x2 + off}" y2="${y2}" stroke="#c62828" stroke-width="2"/>`;
       s += `<text x="${(x1 + x2) / 2 + off}" y="${(y1 + y2) / 2 - 5}" font-size="9" fill="#c62828" font-weight="700" ${FONT}>ACTION</text>`;
     } else if (proto.dilatationLagMin) {
       // LCG: show the current "no-progress window" for the latest dilatation
       const reach = timeReachedCurrentDilatation(patient);
       if (reach && proto.dilatationLagMin[reach.cm] && !patient.delivery) {
         const limMin = proto.dilatationLagMin[reach.cm];
-        const lx1 = x(reach.since), lx2 = x(new Date(+new Date(reach.since) + limMin * 60000));
+        const lx1 = x(reach.since), lx2 = x(new Date(toMs(reach.since) + limMin * 60000));
         const ly = cmY(reach.cm);
         s += `<line x1="${lx1}" y1="${ly}" x2="${lx2}" y2="${ly}" stroke="#c62828" stroke-width="3" stroke-dasharray="6 4" opacity="0.55"/>`;
         s += `<line x1="${lx2}" y1="${ly - 7}" x2="${lx2}" y2="${ly + 7}" stroke="#c62828" stroke-width="2.5"/>`;
@@ -148,8 +156,7 @@ export function renderChart(patient, settings) {
   }
 
   // ---------- plot observations ----------
-  const obs = (patient.obs || []).slice().sort((a, b) => a.time.localeCompare(b.time));
-  const by = type => obs.filter(o => o.type === type);
+  const by = type => obsAll.filter(o => o.type === type);
 
   // FHR polyline + dots
   const fhrPts = by('baby').filter(o => o.v.fhr != null);
@@ -157,7 +164,7 @@ export function renderChart(patient, settings) {
     s += `<polyline points="${fhrPts.map(o => `${x(o.time)},${fhrY(o.v.fhr)}`).join(' ')}" fill="none" stroke="#1565c0" stroke-width="1.5"/>`;
   }
   for (const o of fhrPts) {
-    const bad = o.v.fhr < LIMITS.fhr.low || o.v.fhr >= LIMITS.fhr.high;
+    const bad = FLAG.fhr(o.v.fhr);
     s += `<circle cx="${x(o.time)}" cy="${fhrY(o.v.fhr)}" r="${bad ? 5 : 3.2}" fill="${bad ? '#fff' : '#1565c0'}" stroke="${bad ? '#c62828' : '#1565c0'}" stroke-width="${bad ? 2.5 : 1}"/>`;
   }
 
@@ -168,14 +175,14 @@ export function renderChart(patient, settings) {
   };
   const DECEL_LBL = { none: '—', early: 'E', variable: 'V', late: 'L', prolonged: 'P!' };
   for (const o of by('baby')) {
-    if (o.v.decel) s += code('decel', o.time, DECEL_LBL[o.v.decel] || o.v.decel, o.v.decel === 'late' || o.v.decel === 'prolonged');
-    if (o.v.liquor) s += code('liquor', o.time, o.v.liquor === 'M3' ? 'M+++' : o.v.liquor, o.v.liquor === 'M3' || o.v.liquor === 'B');
+    if (o.v.decel) s += code('decel', o.time, DECEL_LBL[o.v.decel] || o.v.decel, FLAG.decel(o.v.decel));
+    if (o.v.liquor) s += code('liquor', o.time, LIQUOR_LABEL[o.v.liquor] || o.v.liquor, FLAG.liquor(o.v.liquor));
   }
   for (const o of by('exam')) {
-    if (o.v.liquor) s += code('liquor', o.time, o.v.liquor === 'M3' ? 'M+++' : o.v.liquor, o.v.liquor === 'M3' || o.v.liquor === 'B');
-    if (o.v.position) s += code('position', o.time, o.v.position, o.v.position === 'OP' || o.v.position === 'OT');
-    if (o.v.caput != null) s += code('caput', o.time, o.v.caput === 0 ? '0' : '+'.repeat(o.v.caput), o.v.caput >= 3);
-    if (o.v.moulding != null) s += code('moulding', o.time, o.v.moulding === 0 ? '0' : '+'.repeat(o.v.moulding), o.v.moulding >= 3);
+    if (o.v.liquor) s += code('liquor', o.time, LIQUOR_LABEL[o.v.liquor] || o.v.liquor, FLAG.liquor(o.v.liquor));
+    if (o.v.position) s += code('position', o.time, o.v.position, FLAG.position(o.v.position));
+    if (o.v.caput != null) s += code('caput', o.time, o.v.caput === 0 ? '0' : '+'.repeat(o.v.caput), FLAG.caput(o.v.caput));
+    if (o.v.moulding != null) s += code('moulding', o.time, o.v.moulding === 0 ? '0' : '+'.repeat(o.v.moulding), FLAG.moulding(o.v.moulding));
   }
 
   // cervicograph: dilatation X, descent O
@@ -202,7 +209,7 @@ export function renderChart(patient, settings) {
     const bx = x(o.time) - 6;
     const hgt = Math.min(8, o.v.count) * (SEC.contr.h - 8) / 8;
     const byTop = SEC.contr.y + SEC.contr.h - hgt;
-    const bad = o.v.count > LIMITS.contractions.high || o.v.count <= LIMITS.contractions.low;
+    const bad = FLAG.contractionCount(o.v.count) || FLAG.contractionDuration(o.v.duration);
     s += `<rect x="${bx}" y="${byTop}" width="12" height="${hgt}" fill="${SHADE[o.v.durBand] || '#9cc8bd'}" stroke="${bad ? '#c62828' : '#33514a'}" stroke-width="${bad ? 2 : 0.8}"/>`;
   }
 
@@ -210,7 +217,7 @@ export function renderChart(patient, settings) {
   for (const o of by('oxytocin')) {
     s += code('oxy', o.time, `${o.v.uL != null ? o.v.uL + 'U' : ''}${o.v.dropsMin != null ? '@' + o.v.dropsMin : ''}`, false);
   }
-  for (const m of (patient.meds || [])) {
+  for (const m of meds) {
     const row = m.kind === 'oxytocin' ? 'oxy' : 'meds';
     s += code(row, m.time, m.detail ? m.detail.slice(0, 14) : m.kind, false);
   }
@@ -221,29 +228,29 @@ export function renderChart(patient, settings) {
     s += `<polyline points="${pulsePts.map(o => `${x(o.time)},${bpY(o.v.pulse)}`).join(' ')}" fill="none" stroke="#b26a00" stroke-width="1.2"/>`;
   }
   for (const o of pulsePts) {
-    const bad = o.v.pulse < LIMITS.pulse.low || o.v.pulse >= LIMITS.pulse.high;
-    s += `<circle cx="${x(o.time)}" cy="${bpY(o.v.pulse)}" r="3" fill="${bad ? '#c62828' : '#b26a00'}"/>`;
+    s += `<circle cx="${x(o.time)}" cy="${bpY(o.v.pulse)}" r="3" fill="${FLAG.pulse(o.v.pulse) ? '#c62828' : '#b26a00'}"/>`;
   }
   for (const o of by('vitals')) {
     if (o.v.sys != null && o.v.dia != null) {
       const cx = x(o.time);
-      const bad = o.v.sys >= LIMITS.sys.high || o.v.dia >= LIMITS.dia.high || o.v.sys < LIMITS.sys.shock;
-      const col = bad ? '#c62828' : '#1c2b28';
+      const col = FLAG.sys(o.v.sys) || FLAG.dia(o.v.dia) ? '#c62828' : '#1c2b28';
       s += `<line x1="${cx}" y1="${bpY(o.v.sys)}" x2="${cx}" y2="${bpY(o.v.dia)}" stroke="${col}" stroke-width="2"/>`;
       s += `<path d="M${cx - 4},${bpY(o.v.sys) + 4} L${cx},${bpY(o.v.sys)} L${cx + 4},${bpY(o.v.sys) + 4}" fill="none" stroke="${col}" stroke-width="1.5"/>`;
       s += `<path d="M${cx - 4},${bpY(o.v.dia) - 4} L${cx},${bpY(o.v.dia)} L${cx + 4},${bpY(o.v.dia) - 4}" fill="none" stroke="${col}" stroke-width="1.5"/>`;
     }
-    if (o.v.temp != null) s += code('temp', o.time, o.v.temp.toFixed(1), o.v.temp >= LIMITS.temp.high || o.v.temp < LIMITS.temp.low);
-    const ur = [o.v.protein && o.v.protein !== 'nil' ? 'P' + o.v.protein : '', o.v.acetone && o.v.acetone !== 'nil' ? 'A' + o.v.acetone : ''].filter(Boolean).join(' ');
-    if (ur || o.v.urineVoided) s += code('urine', o.time, ur || '✓', /\+\+/.test(ur));
+    if (o.v.temp != null) s += code('temp', o.time, Number(o.v.temp).toFixed(1), FLAG.temp(o.v.temp));
+    const graded = (key, letter) => (urineGrade(o.v[key]) > 0 ? letter + o.v[key] : '');
+    const ur = [graded('protein', 'P'), graded('acetone', 'A')].filter(Boolean).join(' ');
+    if (ur || o.v.urineVoided) s += code('urine', o.time, ur || '✓', FLAG.urine(o.v.protein) || FLAG.urine(o.v.acetone));
   }
 
-  // supportive care row: ✓ all good, letter of what is missing
+  // supportive care row: ✓ all good, else the codes that are alert values
   for (const o of by('supportive')) {
     const miss = [];
     if (o.v.companion === 'N') miss.push('C');
+    if (o.v.painRelief === 'N') miss.push('PR');
     if (o.v.oralFluid === 'N') miss.push('F');
-    if (o.v.posture === 'supine') miss.push('SP');
+    if (isSupine(o.v.posture)) miss.push('SP');
     s += code('support', o.time, miss.length ? miss.join('·') : '✓', miss.length > 0);
   }
 
@@ -254,14 +261,18 @@ export function renderChart(patient, settings) {
   }
 
   const svg = `<svg class="chart-svg" xmlns="http://www.w3.org/2000/svg" width="${width}" height="${HEIGHT}" viewBox="0 0 ${width} ${HEIGHT}">${s}</svg>`;
-
-  const wrap = document.createElement('div');
-  wrap.className = 'chart-scroll';
-  wrap.innerHTML = svg + `<div class="chart-legend">
-    X dilatation (cm) · O descent (fifths above brim) · bars: contractions per 10 min (darker = longer) ·
+  const legend = `X dilatation (cm) · O descent (fifths above brim) · bars: contractions per 10 min (darker = longer) ·
     I/C/M/B amniotic fluid · E/V/L early-variable-late decelerations ·
     ${proto.alertActionLines ? 'orange ALERT and red ACTION lines per Ethiopian modified WHO partograph' : 'red dashed bar = WHO LCG progress time-limit at current dilatation'} ·
-    supportive care: ✓ ok, C no companion, F no fluids, SP supine</div>`;
+    supportive care: ✓ ok, C no companion, PR no pain relief, F no fluids, SP supine`;
+  return { svg, width, height: HEIGHT, legend };
+}
+
+export function renderChart(patient, settings) {
+  const { svg, legend } = chartSVG(patient, settings, new Date());
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-scroll';
+  wrap.innerHTML = svg + `<div class="chart-legend">${legend}</div>`;
   // auto-scroll to the most recent data
   requestAnimationFrame(() => { wrap.scrollLeft = wrap.scrollWidth; });
   return wrap;

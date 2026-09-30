@@ -4,7 +4,7 @@
 
 import { S, savePatient, uid } from './store.js';
 import { getProtocol } from './protocol.js';
-import { evaluateObs, addAlerts } from './alerts.js';
+import { applyObservations } from './record.js';
 import { toast } from './ui.js';
 
 export async function seedDemoPatient() {
@@ -13,7 +13,8 @@ export async function seedDemoPatient() {
   const hrs = h => new Date(now - h * 3600000).toISOString();
 
   const p = {
-    id: uid(), createdAt: hrs(5),
+    id: uid(), createdAt: hrs(5), demo: true, // demo cases never count in the indicators
+    onsetMode: 'spontaneous', romUnknown: false,
     name: 'DEMO — Abeba Tesfaye', age: 24, mrn: 'DEMO-001', phone: '', kebele: 'Demo kebele 01',
     gravida: 2, para: 1, gaWeeks: 39, riskFactors: [],
     laborOnsetTime: hrs(9), romTime: hrs(3),
@@ -26,13 +27,9 @@ export async function seedDemoPatient() {
     protocolId: proto.id, protocolOverride: null, oxytocinRunning: false, referral: null, delivery: null, newborn: null,
   };
 
-  const add = (hAgo, type, v) => {
-    const obs = { id: uid(), type, time: hrs(hAgo), enteredAt: hrs(hAgo), v };
-    p.obs.push(obs);
-    const drafts = evaluateObs(p, obs, S.settings);
-    obs.flags = drafts.map(d => d.code);
-    addAlerts(p, drafts, 'obs');
-  };
+  // entries go through the record layer, exactly as the wizard's do
+  const add = (hAgo, type, v) => applyObservations(p, hrs(hAgo), { [type]: v }, S.settings,
+    { by: 'DEMO', enteredAt: hrs(hAgo), source: hAgo === 5 ? 'admission' : 'entry' });
 
   // admission baseline
   add(5, 'exam', { dilatation: proto.activeStartCm, descent: 4, presentation: 'cephalic', position: 'OA', caput: 0, moulding: 0, liquor: 'I' });
@@ -60,7 +57,7 @@ export async function seedDemoPatient() {
   add(1, 'contractions', { count: 4, durBand: 'b40_60', duration: 50 });
   add(1, 'supportive', { companion: 'Y', painRelief: 'Y', oralFluid: 'Y', posture: 'upright' });
 
-  p.notes.push({ time: hrs(1), text: 'DEMO case for training — progressing well, FHR briefly 162 at 2.5 h (settled).', plan: 'continue routine monitoring' });
+  p.notes.push({ time: hrs(1), by: 'DEMO', text: 'DEMO case for training — progressing well, FHR briefly 162 at 2.5 h (settled).', plan: 'continue routine monitoring' });
 
   await savePatient(p);
   toast('Demo case loaded — open it from the ward board');

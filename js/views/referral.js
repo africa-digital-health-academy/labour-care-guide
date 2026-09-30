@@ -7,10 +7,11 @@
 // makes the pre-referral bundle explicit, and the printable/shareable note
 // gives the hospital the full labour picture.
 
-import { h, field, segmented, toast, fmtDT, fmtTime } from '../ui.js';
+import { h, field, segmented, toast, fmtDT, fmtTime, confirmDialog } from '../ui.js';
 import { t } from '../i18n.js';
 import { S, savePatient } from '../store.js';
-import { lastObs, exams } from '../protocol.js';
+import { lastObs, exams, awaitingHandover } from '../protocol.js';
+import { recordEvent } from '../record.js';
 
 const REASONS = [
   ['prolonged', 'Prolonged / obstructed labour'],
@@ -151,6 +152,7 @@ function referralNote(p) {
       kv('To', `${r.facility || '—'}${r.phone ? ' · ' + r.phone : ''}`),
       kv('Time of referral', fmtDT(r.time)),
       kv('Transport', r.transport),
+      r.handoverAt ? kv('Left the facility', fmtDT(r.handoverAt)) : null,
       h('hr'),
       kv('Patient', `${p.name} · ${p.age || '?'} y · MRN ${p.mrn || '—'}`),
       kv('Obstetric', `G${p.gravida}P${p.para} · GA ${p.gaWeeks || '?'} wk`),
@@ -177,7 +179,17 @@ function referralNote(p) {
       kv('Referred by', r.referredBy || '________________'),
       kv('Receiving feedback', '________________ (please return outcome to the health centre)'),
     ),
+    awaitingHandover(p) ? h('p', { class: 'muted no-print' },
+      'Monitoring continues on the ward board until she leaves with her escort.') : null,
     h('div', { class: 'no-print', style: 'display:flex;gap:8px;flex-wrap:wrap' },
+      awaitingHandover(p) ? h('button', {
+        class: 'btn warn', onclick: async () => {
+          if (!(await confirmDialog('Record that she has left the facility with her escort? Monitoring on this device stops.'))) return;
+          recordEvent(p, 'handover', new Date().toISOString(), S.settings, { by: S.settings.midwifeName || null });
+          await savePatient(p);
+          toast('Departure recorded');
+        },
+      }, '🚑 She has left the facility') : null,
       h('button', { class: 'btn', onclick: () => window.print() }, '🖨 Print note'),
       h('button', {
         class: 'btn secondary', onclick: async () => {

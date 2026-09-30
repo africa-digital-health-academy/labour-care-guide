@@ -5,7 +5,8 @@ import { h, segmented, field, toast, isoToLocalInput, localInputToISO, fmtDT } f
 import { t } from '../i18n.js';
 import { S, savePatient } from '../store.js';
 import { LIMITS } from '../protocol.js';
-import { addAlerts } from '../alerts.js';
+import { AMTSL_STEPS, FLAG } from '../alerts.js';
+import { applyBirth } from '../record.js';
 import { showAlertAckModal } from '../wizard.js';
 
 const APGAR_ITEMS = [
@@ -24,7 +25,7 @@ function apgarBlock(title, state) {
     const total = vals.reduce((a, b) => a + b, 0);
     state.total = total;
     totalEl.textContent = total + ' / 10';
-    totalEl.className = 'apgar-score ' + (total >= 7 ? 'ok' : total >= 4 ? 'warn' : 'bad');
+    totalEl.className = 'apgar-score ' + (total >= LIMITS.apgarLow ? 'ok' : total >= LIMITS.apgarSevere ? 'warn' : 'bad');
   };
   return h('div', { class: 'card' },
     h('h2', null, title),
@@ -45,12 +46,6 @@ const ENC_CHECKLIST = [
   ['eye', 'TTC eye ointment applied'],
   ['chx', 'Chlorhexidine cord care'],
   ['weighed', 'Weighed and examined'],
-];
-
-const AMTSL_CHECKLIST = [
-  ['oxy_amtsl', 'Oxytocin 10 IU IM within 1 minute of birth'],
-  ['cct', 'Controlled cord traction'],
-  ['massage', 'Uterine massage after placenta'],
 ];
 
 export function renderDeliveryTab(p) {
@@ -99,7 +94,7 @@ export function renderDeliveryTab(p) {
     ),
     h('div', { class: 'card' },
       h('h2', null, 'Third stage — AMTSL'),
-      checklist(AMTSL_CHECKLIST, m.amtsl),
+      checklist(AMTSL_STEPS, m.amtsl),
       h('div', { class: 'grid2', style: 'margin-top:10px' },
         field('Placenta complete?', segmented([{ value: 'Y', label: t('yes') }, { value: 'N', label: t('no'), alert: true }], m.placentaComplete, v => { m.placentaComplete = v; })),
         field('Estimated blood loss (ml)', numInput('eblMl')),
@@ -122,48 +117,28 @@ export function renderDeliveryTab(p) {
     if (m.apgar1.total == null || m.apgar5.total == null) {
       if (m.outcome === 'live') { toast('Record APGAR at 1 and 5 minutes', 'danger'); return; }
     }
-    p.delivery = {
+    const delivery = {
       time: localInputToISO(m.time), mode: m.mode, outcome: m.outcome,
       placentaComplete: m.placentaComplete, eblMl: m.eblMl, perineum: m.perineum,
       amtsl: m.amtsl, ppVitals: { sys: m.ppSys, dia: m.ppDia, pulse: m.ppPulse },
     };
-    p.newborn = {
+    const newborn = {
       sex: m.sex, weightG: m.weightG, resus: m.resus === 'Y', resusDetail: m.resusDetail,
       apgar1: m.apgar1.total != null ? m.apgar1 : null,
       apgar5: m.apgar5.total != null ? m.apgar5 : null,
       apgar10: null, enc: m.enc,
     };
-    p.status = 'delivered';
-
-    const drafts = [];
-    if (m.outcome === 'live' && m.apgar5.total != null && m.apgar5.total < 7) {
-      drafts.push({
-        code: 'apgar_low', severity: 'danger', title: `APGAR ${m.apgar5.total}/10 at 5 minutes`,
-        advice: ['Continue/resume newborn resuscitation per HBB', 'Score again at 10 minutes', 'Keep warm; monitor breathing, colour, feeding', 'REFER the newborn if not vigorous'],
-      });
+    // the birth rules (APGAR, retained placenta, stillbirth, PPH trigger) live in the engine (S13)
+    let result;
+    try {
+      result = applyBirth(p, delivery, newborn, S.settings, { by: S.settings.midwifeName || null });
+    } catch (e) {
+      toast(e.message, 'danger');
+      return;
     }
-    if (m.eblMl != null && m.eblMl >= LIMITS.eblAlertMl) {
-      drafts.push({
-        code: 'pph', severity: 'danger', title: `Estimated blood loss ${m.eblMl} ml — PPH`,
-        advice: ['Massage uterus; repeat uterotonic per protocol', 'Empty bladder; check placenta and tears', 'IV fluids fast; monitor vitals every 15 min', 'REFER if bleeding continues'],
-      });
-    }
-    if (m.placentaComplete === 'N') {
-      drafts.push({
-        code: 'retained_products', severity: 'danger', title: 'Placenta incomplete / retained products',
-        advice: ['Risk of PPH and sepsis', 'Manual removal / MVA per BEmONC competency, or REFER', 'IV line + fluids; monitor bleeding'],
-      });
-    }
-    if (m.outcome !== 'live') {
-      drafts.push({
-        code: 'stillbirth', severity: 'warn', title: 'Stillbirth — respectful supportive care',
-        advice: ['Provide compassionate counselling and privacy for the family', 'Complete perinatal death notification per national surveillance', 'Review the partograph for learning (audit), not blame'],
-      });
-    }
-    const newAlerts = addAlerts(p, drafts, 'obs');
     await savePatient(p);
     toast('Birth record saved ✓');
-    if (newAlerts.length) showAlertAckModal(p, newAlerts);
+    if (result.added.length) showAlertAckModal(p, result.added);
     location.hash = `#/p/${p.id}/delivery`;
   }
 }
@@ -173,10 +148,10 @@ export function renderDeliveryTab(p) {
 function deliverySummary(p) {
   const d = p.delivery, n = p.newborn || {};
   const apgarChip = a => a ? h('span', {
-    class: 'chip ' + (a.total >= 7 ? 'ok' : a.total >= 4 ? 'due' : 'overdue'),
+    class: 'chip ' + (a.total >= LIMITS.apgarLow ? 'ok' : a.total >= LIMITS.apgarSevere ? 'due' : 'overdue'),
   }, a.total + '/10') : '—';
 
-  const add10 = n.apgar5 && n.apgar5.total < 7 && !n.apgar10;
+  const add10 = n.apgar5 && n.apgar5.total < LIMITS.apgarLow && !n.apgar10;
   const state10 = {};
 
   return h('div', null,
@@ -190,7 +165,7 @@ function deliverySummary(p) {
         h('span', { style: 'display:flex;gap:6px' }, apgarChip(n.apgar1), apgarChip(n.apgar5), apgarChip(n.apgar10))),
       n.resus ? kv('Resuscitation', n.resusDetail || 'Yes') : null,
       kv('Placenta', d.placentaComplete === 'Y' ? 'Complete' : '⚠ Incomplete'),
-      d.eblMl != null ? kv('Blood loss', d.eblMl + ' ml' + (d.eblMl >= LIMITS.eblAlertMl ? ' ⚠' : '')) : null,
+      d.eblMl != null ? kv('Blood loss', d.eblMl + ' ml' + (FLAG.bloodLoss(d.eblMl) ? ' ⚠' : '')) : null,
       kv('Perineum', d.perineum),
     ),
     add10 ? h('div', null,
