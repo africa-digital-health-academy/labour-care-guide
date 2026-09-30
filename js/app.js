@@ -1,18 +1,21 @@
 // app.js - boot, hash routing, top bar (clock + Ethiopian date), bottom nav,
 // the heartbeat tick that re-checks schedules and time-based alerts for every
-// labouring woman (the "who needs me now" engine behind the ward board), and
-// the release plumbing: service-worker update chip, audio unlock, wake lock.
+// labouring woman and every mother in postpartum watch (the "who needs me
+// now" engine behind the ward board), render safety (S3: a data change never
+// wipes a form in progress), and the release plumbing: service-worker update
+// chip, audio unlock, wake lock.
 
 import './version.js';
 import { h, clear, beep, toast, eatDate, APP_TZ, unlockAudio } from './ui.js';
 import { t } from './i18n.js';
-import { S, initStore, bus, savePatient } from './store.js';
-import { getProtocol, dueList, isLabouring } from './protocol.js';
+import { S, initStore, bus, savePatient, patientById } from './store.js';
+import { getProtocol, dueList, isLabouring, inPostpartumWatch } from './protocol.js';
 import { refreshTimeAlerts } from './alerts.js';
+import { renderChart } from './chart.js';
 import { formatEthiopic } from './ethiopic.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderAdmission } from './views/admission.js';
-import { renderPatient } from './views/patient.js';
+import { renderPatient, patientHeader, alertStrip } from './views/patient.js';
 import { renderReports } from './views/reports.js';
 import { renderSettings } from './views/settings.js';
 
@@ -73,13 +76,36 @@ function offerUpdate(reg) {
     if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
     else location.reload();
   };
-  render();
+  render('data');
+}
+
+function updateChip() {
+  return h('button', { class: 'update-chip', title: 'A new version is ready. Tap to reload.', onclick: () => activateUpdate() }, 'Update ready');
 }
 
 // -------------------------------------------------------------- render -----
+// Render safety (S3). A full render rebuilds the whole page, and every form on
+// it. Navigation ('navigate') always rebuilds. A data change ('data': any
+// savePatient - the tick's, another woman's - or a release notice) rebuilds
+// only when no form is in progress; otherwise refreshLive() swaps just the
+// live parts. A form in progress is an element carrying data-form without
+// data-saved; its save handler sets data-saved just before savePatient, so
+// the save that completes a form does rebuild the page.
 
-function render() {
+const OPEN_FORM = '[data-form]:not([data-saved])';
+let shown = null; // the route the page on screen was built for
+
+function formInProgress(root = app) {
+  return !!root.querySelector(OPEN_FORM);
+}
+
+function render(reason = 'navigate') {
+  if (reason !== 'navigate' && formInProgress()) {
+    refreshLive();
+    return;
+  }
   const r = route();
+  shown = r;
   clear(app);
 
   const clockEl = h('div', { class: 'clock' });
@@ -95,9 +121,7 @@ function render() {
       : null,
     h('button', { class: 'btn-home', title: t('dashboard'), 'aria-label': t('dashboard'), onclick: goHome }, '🤰'),
     h('h1', { class: 'brand-title', title: t('dashboard'), onclick: goHome }, titleFor(r)),
-    activateUpdate
-      ? h('button', { class: 'update-chip', title: 'A new version is ready. Tap to reload.', onclick: () => activateUpdate() }, 'Update ready')
-      : null,
+    activateUpdate ? updateChip() : null,
     clockEl,
   ));
 
@@ -130,38 +154,132 @@ function updateClock(el) {
   );
 }
 
+// --------------------------------------------------------- live parts ------
+
+/**
+ * Refresh what time and data change without touching anything typed: the
+ * clock and the update chip everywhere; on a case view the header, the alert
+ * strip and, on the chart tab, the chart. The ward board holds no forms, so
+ * it is simply rebuilt. Other views: clock only.
+ */
+function refreshLive() {
+  const r = shown || route();
+  if (r.view === 'dashboard' && !formInProgress()) {
+    render('navigate');
+    return;
+  }
+  refreshTopbar();
+  if (r.view !== 'patient') return;
+  const p = patientById(r.id);
+  if (!p) return;
+  const now = new Date();
+  swapLive('patient-header', () => patientHeader(p, now));
+  swapLive('alert-strip', () => alertStrip(p));
+  refreshChart(p);
+}
+
+function refreshTopbar() {
+  const bar = app.querySelector('.topbar');
+  if (!bar) return;
+  const clock = bar.querySelector('.clock');
+  if (clock) updateClock(clock);
+  const chip = bar.querySelector('.update-chip');
+  if (activateUpdate && !chip) bar.insertBefore(updateChip(), clock);
+}
+
+/** A live region must never hold, or sit inside, a form in progress. */
+function touchesForm(el) {
+  return !!el.closest(OPEN_FORM) || formInProgress(el);
+}
+
+/** Replace one [data-live] region with a fresh build; identical markup is left alone. */
+function swapLive(name, build) {
+  const old = app.querySelector(`[data-live="${name}"]`);
+  if (!old || touchesForm(old)) return;
+  const fresh = build() || h('div');
+  if (!fresh.dataset.live) fresh.dataset.live = name; // keep it findable next time
+  if (fresh.outerHTML !== old.outerHTML) old.replaceWith(fresh);
+}
+
+/**
+ * Fresh chart inside the [data-live="chart"] wrapper the case view built
+ * (present only on the chart tab). Only the renderChart() output is replaced,
+ * so the wrapper and anything else the view put in it stay as built. A
+ * midwife reviewing earlier hours keeps her scroll position; one at the
+ * newest data follows it (renderChart scrolls to the end).
+ */
+function refreshChart(p) {
+  const wrap = app.querySelector('[data-live="chart"]');
+  if (!wrap || touchesForm(wrap)) return;
+  const old = wrap.matches('.chart-scroll') ? wrap : wrap.querySelector('.chart-scroll');
+  const fresh = renderChart(p, S.settings);
+  if (!old) {
+    wrap.replaceChildren(fresh);
+    return;
+  }
+  if (old === wrap) fresh.dataset.live = 'chart';
+  if (fresh.outerHTML === old.outerHTML) return;
+  const atNewest = old.scrollLeft + old.clientWidth >= old.scrollWidth - 4;
+  const left = old.scrollLeft;
+  old.replaceWith(fresh);
+  if (!atNewest) requestAnimationFrame(() => { fresh.scrollLeft = left; });
+}
+
 // ------------------------------------------------------- heartbeat tick ----
 
 // remember chip states so each transition only beeps once
 const lastDueState = new Map(); // patientId:type -> state
+const tickFailed = new Set();   // case ids whose current failure was already shown
+
+/** One case's heartbeat. Returns which beeps it asks for: { danger, due }. */
+async function tickCase(p, now) {
+  let danger = false, due = false;
+  const proto = getProtocol(S.settings, p);
+
+  // time-based clinical alerts (progress limits, 2nd-stage duration, ROM...)
+  // run in labour only: new ones are raised, cleared ones resolve so a
+  // recurrence alerts again (S1). The save re-renders through the store bus.
+  if (isLabouring(p)) {
+    const { added, resolved } = refreshTimeAlerts(p, S.settings, now);
+    if (added.length || resolved.length) await savePatient(p);
+    if (added.length) {
+      danger = added.some(a => a.severity === 'danger');
+      due = !danger;
+      toast(`${p.name}: ${added[0].title}`, danger ? 'danger' : '');
+    }
+  }
+
+  // due/overdue transitions: labour observations, or the postpartum mother,
+  // baby, BP and urine checks (N4)
+  for (const d of dueList(p, proto, now)) {
+    const key = p.id + ':' + d.type;
+    const prev = lastDueState.get(key);
+    if (d.state !== prev) {
+      lastDueState.set(key, d.state);
+      if (d.state === 'overdue' && prev !== undefined) due = true;
+    }
+  }
+  return { danger, due };
+}
 
 async function tick() {
   const now = new Date();
-  let dangerBeep = false, dueBeep = false, changed = false;
+  let dangerBeep = false, dueBeep = false;
 
   for (const p of S.patients) {
-    if (!isLabouring(p)) continue;
-    const proto = getProtocol(S.settings, p);
-
-    // time-based clinical alerts (progress limits, 2nd-stage duration, ROM...):
-    // new ones are raised, cleared ones resolve so a recurrence alerts again (S1)
-    const { added, resolved } = refreshTimeAlerts(p, S.settings, now);
-    if (added.length || resolved.length) {
-      changed = true;
-      await savePatient(p);
-    }
-    if (added.length) {
-      if (added.some(a => a.severity === 'danger')) dangerBeep = true; else dueBeep = true;
-      toast(`${p.name}: ${added[0].title}`, added.some(a => a.severity === 'danger') ? 'danger' : '');
-    }
-
-    // observation due/overdue transitions
-    for (const d of dueList(p, proto, now)) {
-      const key = p.id + ':' + d.type;
-      const prev = lastDueState.get(key);
-      if (d.state !== prev) {
-        lastDueState.set(key, d.state);
-        if (d.state === 'overdue' && prev !== undefined) dueBeep = true;
+    if (patientById(p.id) !== p) continue; // removed while an earlier save was pending
+    if (!isLabouring(p) && !inPostpartumWatch(p, now)) continue;
+    try {
+      const r = await tickCase(p, now);
+      if (r.danger) dangerBeep = true;
+      if (r.due) dueBeep = true;
+      tickFailed.delete(p.id); // recovered: a later failure is announced again
+    } catch (err) {
+      // one malformed case must not silence the heartbeat for every other woman
+      console.error('Heartbeat check failed for case ' + p.id, err);
+      if (!tickFailed.has(p.id)) {
+        tickFailed.add(p.id);
+        toast(`${p.name}: automatic checks failed - review this case`, 'danger');
       }
     }
   }
@@ -169,9 +287,8 @@ async function tick() {
   if (S.settings.sound && dangerBeep) beep('danger');
   else if (S.settings.sound && dueBeep) beep('due');
 
-  // keep countdown chips fresh on time-sensitive screens
-  const r = route();
-  if (changed || r.view === 'dashboard' || r.view === 'patient') render();
+  // keep clocks, countdown chips and timers fresh; never a full render (S3)
+  refreshLive();
 }
 
 // ------------------------------------------------------------ wake lock ----
@@ -214,9 +331,9 @@ async function boot() {
     bootError(err);
     return;
   }
-  render();
-  window.addEventListener('hashchange', render);
-  bus.addEventListener('change', render);
+  render('navigate');
+  window.addEventListener('hashchange', () => render('navigate'));
+  bus.addEventListener('change', () => render('data'));
   setInterval(tick, 30000);
 
   keepAwake();

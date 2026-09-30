@@ -2,13 +2,18 @@
 // Captures the LCG first-page items + Ethiopian risk screening. Women with
 // conditions that should deliver at hospital level (CEmONC) are flagged
 // immediately so referral happens BEFORE labour advances.
+//
+// M3: the baseline records only what was examined or asked (S4, through
+// record.admissionEntries); labour onset, the presentation, the rupture time
+// or U = unknown and the companion answer are asked, never assumed (F4); every
+// entry carries the initials of the person admitting (F3).
 
-import { h, field, segmented, toast, isoToLocalInput, localInputToISO } from '../ui.js';
+import { h, field, segmented, toast, byField, isoToLocalInput, localInputToISO } from '../ui.js';
 import { t } from '../i18n.js';
-import { S, savePatient, uid } from '../store.js';
+import { S, savePatient, uid, getBy, setBy } from '../store.js';
 import { getProtocol } from '../protocol.js';
-import { addAlerts, admissionRiskAlerts } from '../alerts.js';
-import { applyObservations, createCase } from '../record.js';
+import { addAlerts, admissionRiskAlerts, FLAG } from '../alerts.js';
+import { admissionEntries, applyObservations, createCase } from '../record.js';
 import { showAlertAckModal } from '../wizard.js';
 
 // Country dial codes — Ethiopia (+251) first and default; neighbours and common
@@ -49,29 +54,85 @@ const RISK_FACTORS = [
   ['preterm', 'Preterm (< 37 weeks)', false],
 ];
 
+// Amniotic fluid once the membranes have ruptured (manual Table 4). 'M', v1's
+// ungraded meconium, is never offered; the alert marks come from the engine.
+const FLUID_OPTIONS = [['C', 'Clear'], ['M1', 'M+'], ['M2', 'M++'], ['M3', 'M+++ thick'], ['B', 'Blood']]
+  .map(([value, label]) => ({ value, label, alert: FLAG.liquor(value) }));
+
+// Companion of her choice (manual Table 3): Y yes, N no (the alert value), D declines.
+const COMPANION_OPTIONS = [['Y', 'Present'], ['N', 'Wanted, not present'], ['D', 'Declines']]
+  .map(([value, label]) => ({ value, label, alert: FLAG.supportive('companion', value) }));
+
+const ONSET_OPTIONS = [{ value: 'spontaneous', label: 'Spontaneous' }, { value: 'induced', label: 'Induced' }];
+const MEMBRANE_OPTIONS = [{ value: 'intact', label: 'Intact' }, { value: 'ruptured', label: 'Ruptured' }];
+// any presentation other than cephalic raises the malpresentation alert
+const PRESENTATION_OPTIONS = [
+  { value: 'cephalic', label: 'Cephalic' }, { value: 'breech', label: 'Breech', alert: true },
+  { value: 'transverse', label: 'Transverse', alert: true }, { value: 'other', label: 'Other', alert: true },
+];
+
+/**
+ * A labelled question with no default answer. A <label> forwards a tap on its
+ * text to its first button, which would silently pick the first option.
+ */
+function choiceField(labelText, control) {
+  return h('label', {
+    class: 'field',
+    onclick: e => { if (!e.target.closest('button, input, select, textarea')) e.preventDefault(); },
+  }, h('span', null, labelText), control);
+}
+
+/** Segmented choice that may stay unanswered: "clear" takes it back to unset. */
+function optionalChoice(opts, initial, onChange) {
+  let value = initial;
+  const wrap = h('div');
+  const paint = () => {
+    const parts = [segmented(opts, value, v => { value = v; onChange(v); paint(); })];
+    if (value != null) {
+      parts.push(h('button', {
+        type: 'button', class: 'btn ghost', onclick: () => { value = null; onChange(null); paint(); },
+      }, 'clear'));
+    }
+    wrap.replaceChildren(...parts);
+  };
+  paint();
+  return wrap;
+}
+
 export function renderAdmission() {
   const m = {
     name: '', age: null, mrn: '', phone: '', phoneCode: '+251', phoneNumber: '', kebele: '',
     gravida: null, para: null, gaWeeks: null,
     riskFactors: [],
-    membranes: 'intact', romTime: null,
+    onsetMode: null,                                    // 'spontaneous' | 'induced', required (F4)
+    membranes: null, romTime: '', romUnknown: false, liquor: null,
     laborOnsetTime: isoToLocalInput(new Date(Date.now() - 2 * 3600000).toISOString()),
     admissionTime: isoToLocalInput(),
     dilatation: null, descent: null, fhr: null, pulse: null,
-    sys: null, dia: null, temp: null, presentation: 'cephalic',
-    contractions: null, companion: 'Y',
+    sys: null, dia: null, temp: null, presentation: null, // required, never assumed
+    contractions: null, companion: null,                // Y | N | D, unset until asked
   };
+  let by = '';
+  let saving = false;
 
   const input = (key, type = 'text', attrs = {}) => h('input', Object.assign({
     type, value: m[key] ?? '',
     oninput: e => { m[key] = type === 'number' ? (e.target.value === '' ? null : +e.target.value) : e.target.value; },
   }, attrs));
 
-  const romTimeField = h('div', { style: m.membranes === 'intact' ? 'display:none' : '' },
-    field('When did membranes rupture?', h('input', {
-      type: 'datetime-local', value: isoToLocalInput(),
-      oninput: e => { m.romTime = e.target.value; },
-    })),
+  // Ruptured membranes: the time, or U = unknown (F4), and the fluid if seen.
+  const romTimeField = field('When did the membranes rupture? *', h('input', {
+    type: 'datetime-local', value: m.romTime, oninput: e => { m.romTime = e.target.value; },
+  }));
+  const romBlock = h('div', { style: 'display:none' },
+    romTimeField,
+    h('div', { class: 'checklist', style: 'margin-bottom:12px' }, h('label', null,
+      h('input', {
+        type: 'checkbox',
+        onchange: e => { m.romUnknown = e.target.checked; romTimeField.style.display = m.romUnknown ? 'none' : ''; },
+      }),
+      'Time unknown (U) - she cannot say and there is no record')),
+    choiceField('Amniotic fluid (if seen)', optionalChoice(FLUID_OPTIONS, m.liquor, v => { m.liquor = v; })),
   );
 
   // Phone: country-code selector (Ethiopia default) + number; combined into m.phone.
@@ -89,7 +150,7 @@ export function renderAdmission() {
     }),
   );
 
-  const page = h('div', { class: 'page' },
+  const page = h('div', { class: 'page', 'data-form': 'admission' },
     h('div', { class: 'card' },
       h('h2', null, '1 · ' + t('mother')),
       h('div', { class: 'grid2' },
@@ -123,15 +184,19 @@ export function renderAdmission() {
     ),
     h('div', { class: 'card' },
       h('h2', null, '3 · Labour status'),
+      choiceField('Labour onset *', segmented(ONSET_OPTIONS, m.onsetMode, v => { m.onsetMode = v; })),
+      h('p', { class: 'muted', style: 'margin-top:-6px' },
+        'Induced: labour was started by oxytocin, prostaglandins, artificial rupture of the membranes, a balloon catheter or any other artificial means.'),
       h('div', { class: 'grid2' },
-        field('Labour onset (approx.)', h('input', { type: 'datetime-local', value: m.laborOnsetTime, oninput: e => { m.laborOnsetTime = e.target.value; } })),
+        field('Labour onset time (approx.)', h('input', { type: 'datetime-local', value: m.laborOnsetTime, oninput: e => { m.laborOnsetTime = e.target.value; } })),
         field('Admission time', h('input', { type: 'datetime-local', value: m.admissionTime, oninput: e => { m.admissionTime = e.target.value; } })),
       ),
-      field('Membranes', segmented([
-        { value: 'intact', label: 'Intact' }, { value: 'ruptured', label: 'Ruptured' },
-      ], m.membranes, v => { m.membranes = v; romTimeField.style.display = v === 'intact' ? 'none' : ''; })),
-      romTimeField,
-      field(t('companion'), segmented([{ value: 'Y', label: t('yes') }, { value: 'N', label: t('no') }], m.companion, v => { m.companion = v; })),
+      choiceField('Membranes *', segmented(MEMBRANE_OPTIONS, m.membranes, v => {
+        m.membranes = v;
+        romBlock.style.display = v === 'ruptured' ? '' : 'none';
+      })),
+      romBlock,
+      choiceField('Companion of her choice', optionalChoice(COMPANION_OPTIONS, m.companion, v => { m.companion = v; })),
     ),
     h('div', { class: 'card' },
       h('h2', null, '4 · Admission examination'),
@@ -145,62 +210,100 @@ export function renderAdmission() {
         field('BP systolic', input('sys', 'number', { min: 50, max: 260 })),
         field('BP diastolic', input('dia', 'number', { min: 30, max: 160 })),
       ),
-      field('Presentation', segmented([
-        { value: 'cephalic', label: 'Cephalic' }, { value: 'breech', label: 'Breech', alert: true },
-        { value: 'transverse', label: 'Transverse', alert: true }, { value: 'other', label: 'Other', alert: true },
-      ], m.presentation, v => { m.presentation = v; })),
+      choiceField('Presentation *', segmented(PRESENTATION_OPTIONS, m.presentation, v => { m.presentation = v; })),
     ),
+    byField(getBy(), v => { by = v; }),
     h('button', { class: 'btn big', onclick: save }, '✓ Admit & start monitoring'),
     h('p', { class: 'muted', style: 'text-align:center' },
       'The monitoring schedule and partograph start automatically from these values.'),
   );
 
-  async function save() {
-    if (!m.name.trim()) { toast('Name is required', 'danger'); return; }
-    if (m.gravida == null || m.para == null) { toast('Gravida and Para are required', 'danger'); return; }
-    if (m.dilatation == null || m.fhr == null) { toast('Admission dilatation and FHR are required', 'danger'); return; }
-
+  /** The new case with its admission entries and alerts (nothing saved yet). */
+  function admit() {
     const proto = getProtocol(S.settings, null);
     const admTime = localInputToISO(m.admissionTime) || new Date().toISOString();
-    // created in the current schema so a reload never re-migrates it (record.js)
-    const p = createCase({
+    const ruptured = m.membranes === 'ruptured';
+    const fields = {
       id: uid(), createdAt: new Date().toISOString(),
       name: m.name.trim(), age: m.age, mrn: m.mrn, phone: m.phone, kebele: m.kebele,
       gravida: m.gravida, para: m.para, gaWeeks: m.gaWeeks,
       riskFactors: m.riskFactors,
+      onsetMode: m.onsetMode,
       laborOnsetTime: localInputToISO(m.laborOnsetTime),
-      romTime: m.membranes === 'ruptured' ? (localInputToISO(m.romTime) || admTime) : null,
+      // U = unknown: ruptured, no time (F4); the engine then never derives one
+      romUnknown: ruptured && m.romUnknown,
+      romTime: ruptured && !m.romUnknown ? localInputToISO(m.romTime) : null,
       admission: {
         time: admTime, dilatation: m.dilatation, descent: m.descent,
         fhr: m.fhr, pulse: m.pulse, sys: m.sys, dia: m.dia, temp: m.temp,
-        presentation: m.presentation, companion: m.companion,
+        presentation: m.presentation, companion: m.companion, by,
       },
       status: 'latent', activeStartTime: null, secondStageStart: null, // derived from the admission exam below
       protocolId: proto.id,
+    };
+    // Y (present) and N (wanted, not present) both mean she wants one; unasked stays unknown
+    if (m.companion) fields.companionWanted = m.companion !== 'D';
+    // created in the current schema so a reload never re-migrates it (record.js)
+    const p = createCase(fields);
+
+    // only what was examined or asked becomes an entry (S4)
+    const baseline = admissionEntries({
+      fhr: m.fhr, contractions: m.contractions, pulse: m.pulse,
+      sys: m.sys, dia: m.dia, temp: m.temp,
+      dilatation: m.dilatation, descent: m.descent, presentation: m.presentation,
+      membranes: m.membranes, liquor: ruptured ? m.liquor : null, companion: m.companion,
     });
-
-    // baseline observations so the chart starts populated. Recording only what
-    // was actually entered (S4) arrives with the admission-form rework in M3.
-    const liquor = m.membranes === 'intact' ? 'I' : 'C';
-    const baseline = { baby: { fhr: m.fhr, decel: 'none', liquor } };
-    if (m.contractions != null) baseline.contractions = { count: m.contractions };
-    if (m.pulse != null) baseline.pulse = { pulse: m.pulse };
-    if (m.sys != null && m.dia != null) baseline.vitals = { sys: m.sys, dia: m.dia, temp: m.temp };
-    baseline.exam = { dilatation: m.dilatation, descent: m.descent, presentation: m.presentation, liquor };
-    baseline.supportive = { companion: m.companion, painRelief: 'Y', oralFluid: 'Y', posture: 'upright' };
-
-    const by = S.settings.midwifeName || null;
-    const newAlerts = [...applyObservations(p, admTime, baseline, S.settings, { by, source: 'admission' }).added];
+    const alerts = [...applyObservations(p, admTime, baseline, S.settings, { by, source: 'admission' }).added];
 
     // risk factors that should deliver at hospital (CEmONC) level
     const labelOf = code => (RISK_FACTORS.find(x => x[0] === code) || [code, code])[1];
-    newAlerts.push(...addAlerts(p, admissionRiskAlerts(p, S.settings, labelOf), 'admission', { time: admTime }));
+    alerts.push(...addAlerts(p, admissionRiskAlerts(p, S.settings, labelOf), 'admission', { time: admTime }));
+    return { p, alerts };
+  }
 
-    await savePatient(p);
+  async function save() {
+    if (saving) return; // a double tap must not admit her twice
+    const why = admissionProblem(m, by);
+    if (why) { toast(why, 'danger'); return; }
+    saving = true; // stays set once saved: the page is about to be replaced
+    let made;
+    try {
+      made = admit();
+      page.dataset.saved = '1'; // lets the app re-render: nothing left to lose
+      await savePatient(made.p);
+    } catch (e) {
+      saving = false;
+      delete page.dataset.saved;
+      toast('Could not admit: ' + ((e && e.message) || e), 'danger');
+      return;
+    }
+    const { p, alerts } = made;
+    setBy(by);
     toast('Admitted — monitoring schedule started ✓');
     location.hash = '#/p/' + p.id;
-    if (newAlerts.length) setTimeout(() => showAlertAckModal(p, newAlerts), 300);
+    if (alerts.length) setTimeout(() => showAlertAckModal(p, alerts), 300);
   }
 
   return page;
+}
+
+/**
+ * The first missing or impossible answer on the admission form, or null when
+ * it can be saved. m is the form state, by the initials. No DOM: exported
+ * for the tests.
+ */
+export function admissionProblem(m, by) {
+  if (!m.name.trim()) return 'Name is required';
+  if (m.gravida == null || m.para == null) return 'Gravida and Para are required';
+  if (!m.onsetMode) return 'Labour onset: choose Spontaneous or Induced';
+  if (!m.membranes) return 'Membranes: choose Intact or Ruptured';
+  if (m.membranes === 'ruptured' && !m.romUnknown) {
+    const rom = localInputToISO(m.romTime);
+    if (!rom) return 'Enter when the membranes ruptured, or tick Time unknown (U)';
+    if (new Date(rom) > new Date()) return 'The rupture time is in the future';
+  }
+  if (m.dilatation == null || m.fhr == null) return 'Admission dilatation and FHR are required';
+  if (!m.presentation) return 'Presentation: choose Cephalic, Breech, Transverse or Other';
+  if (!by) return 'Your initials are required';
+  return null;
 }

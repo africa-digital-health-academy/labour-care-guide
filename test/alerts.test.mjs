@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateObs, evaluateTime } from '../js/alerts.js';
+import { evaluateObs, evaluateTime, FLAG } from '../js/alerts.js';
 import { NOW, iso, mkPatient } from './helpers.mjs';
 
 const settings = { protocol: 'lcg' };
@@ -69,4 +69,13 @@ test('second stage: nullipara at 1 h is silent', () => {
 test('membranes ruptured 19 h fires prolonged ROM; 6 h is silent', () => {
   assert.ok(codes(evaluateTime(mkPatient({ romTime: iso(19) }), settings, NOW)).includes('prom_long'));
   assert.ok(!codes(evaluateTime(mkPatient({ romTime: iso(6) }), settings, NOW)).includes('prom_long'));
+});
+
+test('FLAG.newbornTemp marks exactly the temperatures the ppBaby rule alerts on (nb_cold, nb_hot)', () => {
+  for (const [temp, flagged, code] of [[36.4, true, 'nb_cold'], [36.5, false, null], [37.4, false, null], [37.5, true, 'nb_hot']]) {
+    assert.equal(FLAG.newbornTemp(temp), flagged, `wizard hint at ${temp}`);
+    const got = codes(evaluateObs(mkPatient(), { type: 'ppBaby', time: iso(0), v: { breathing: 'normal', temp } }, settings))
+      .filter(c => c === 'nb_cold' || c === 'nb_hot');
+    assert.deepEqual(got, code ? [code] : [], `rule at ${temp}`);
+  }
 });

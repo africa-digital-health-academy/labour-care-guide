@@ -6,11 +6,13 @@
 // severe pre-eclampsia referrals get MgSO4 before transport. The checklist
 // makes the pre-referral bundle explicit, and the printable/shareable note
 // gives the hospital the full labour picture.
+//
+// M3: the referral and her departure carry the initials of whoever records
+// them (F3); she stays monitored until the departure is recorded (S8).
 
-import { h, field, segmented, toast, fmtDT, fmtTime, confirmDialog } from '../ui.js';
-import { t } from '../i18n.js';
-import { S, savePatient } from '../store.js';
-import { lastObs, exams, awaitingHandover } from '../protocol.js';
+import { h, field, segmented, toast, fmtDT, fmtTime, byField, promptDialog } from '../ui.js';
+import { S, savePatient, getBy, setBy } from '../store.js';
+import { lastObs, exams, stageOf, isLabouring, inPostpartumWatch } from '../protocol.js';
 import { recordEvent, applyReferral } from '../record.js';
 
 const REASONS = [
@@ -56,6 +58,34 @@ const CHECKLIST = [
   ['family', 'Woman & family informed and consented', () => true],
 ];
 
+const errText = e => (e && e.message) || String(e);
+
+/**
+ * Apply a record-layer change to the live case and save it. If either step
+ * fails the case is put back as it was, so the screen never shows a change
+ * that was not stored and a retry starts clean.
+ */
+async function commit(p, change) {
+  const before = structuredClone(p);
+  try {
+    const out = change();
+    await savePatient(p);
+    return out;
+  } catch (e) {
+    for (const k of Object.keys(p)) delete p[k];
+    Object.assign(p, before);
+    throw e;
+  }
+}
+
+/**
+ * Every save marks the form saved, so the app redraws the page from the
+ * case. If the view was kept anyway, redraw the tab in place.
+ */
+function redraw(root, p) {
+  if (root.isConnected) root.replaceWith(renderReferralTab(p));
+}
+
 export function renderReferralTab(p) {
   if (p.referral) return referralNote(p);
 
@@ -66,6 +96,8 @@ export function renderReferralTab(p) {
   const selected = new Set(suggested);
   const checks = {};
   const m = { facility: '', phone: '', transport: 'ambulance', otherReason: '' };
+  let by = '';
+  let saving = false;
 
   const checklistWrap = h('div', { class: 'checklist' });
   const renderChecklist = () => {
@@ -77,7 +109,7 @@ export function renderReferralTab(p) {
   };
   renderChecklist();
 
-  return h('div', null,
+  const root = h('div', { 'data-form': 'referral' },
     h('div', { class: 'card' },
       h('h2', null, '🏥 Start referral'),
       suggested.size ? h('p', { class: 'muted' }, '⚠ Reasons below were pre-selected from active alerts.') : null,
@@ -106,32 +138,75 @@ export function renderReferralTab(p) {
         { value: 'ambulance', label: 'Ambulance' }, { value: 'private', label: 'Private vehicle' }, { value: 'other', label: 'Other' },
       ], m.transport, v => { m.transport = v; })),
     ),
+    byField(getBy(), v => { by = v; }),
     h('button', { class: 'btn big danger', onclick: save }, '🚑 Confirm referral & generate note'),
   );
 
   async function save() {
-    if (!selected.size && !m.otherReason) { toast('Select at least one reason', 'danger'); return; }
+    if (saving) return;
+    if (!selected.size && !m.otherReason.trim()) { toast('Select at least one reason', 'danger'); return; }
+    if (!by) { toast('Your initials are required', 'danger'); return; }
     const missing = CHECKLIST.filter(([code, , show]) => show(selected) && !checks[code]);
     if (missing.length) {
       // warn but never block — transport must not wait for paperwork
       toast(`Note: ${missing.length} pre-referral item(s) not ticked`, 'danger');
     }
-    // the record layer marks her "not yet left", so monitoring continues (S8)
-    applyReferral(p, {
+    saving = true; // stays set once saved: the tab is redrawn as the referral note
+    const referral = {
       time: new Date().toISOString(),
       reasons: [...selected].map(code => (REASONS.find(r => r[0] === code) || [code, code])[1]),
       otherReason: m.otherReason,
       checklist: CHECKLIST.filter(([, , show]) => show(selected)).map(([code, label]) => ({ code, label, done: !!checks[code] })),
       facility: m.facility, phone: m.phone, transport: m.transport,
       referredBy: S.settings.midwifeName || '',
-    }, { by: S.settings.midwifeName || null });
-    await savePatient(p);
+      by,
+    };
+    try {
+      root.dataset.saved = '1';
+      // the record layer marks her "not yet left", so monitoring continues (S8)
+      await commit(p, () => applyReferral(p, referral, { by }));
+    } catch (e) {
+      saving = false;
+      delete root.dataset.saved;
+      toast(errText(e), 'danger');
+      return;
+    }
+    setBy(by);
     toast('Referral recorded — note ready ✓');
-    location.hash = `#/p/${p.id}/referral`;
+    redraw(root, p);
   }
+
+  return root;
 }
 
 // ------------------------------------------------------- printable note ----
+
+/** Referring provider for the note: the Settings name and the recorder's initials. */
+function referrer(r) {
+  return [r.referredBy, r.by ? `(${r.by})` : null].filter(Boolean).join(' ');
+}
+
+/**
+ * S8: departure closes monitoring on this device. A woman referred after
+ * the birth leaves too, so this does not depend on labour still running.
+ */
+async function recordDeparture(p, root) {
+  const res = await promptDialog({
+    title: 'She has left the facility',
+    message: 'Record that she has left with her escort? Monitoring on this device stops.',
+    by: getBy(), okLabel: 'Record departure',
+  });
+  if (!res) return;
+  try {
+    await commit(p, () => recordEvent(p, 'handover', new Date().toISOString(), S.settings, { by: res.by }));
+  } catch (e) {
+    toast(errText(e), 'danger');
+    return;
+  }
+  setBy(res.by);
+  toast('Departure recorded');
+  redraw(root, p);
+}
 
 function referralNote(p) {
   const r = p.referral;
@@ -140,17 +215,18 @@ function referralNote(p) {
   const lastVitals = lastObs(p, 'vitals');
   const lastPulse = lastObs(p, 'pulse');
   const lastContr = lastObs(p, 'contractions');
+  const waiting = !r.handoverAt && stageOf(p) !== 'closed';
 
   const noteText = buildShareText(p);
 
-  return h('div', null,
+  const root = h('div', null,
     h('div', { class: 'card', id: 'referral-note' },
       h('h2', null, '🚑 Referral note'),
       kv('From', S.settings.facilityName || 'Health centre'),
       kv('To', `${r.facility || '—'}${r.phone ? ' · ' + r.phone : ''}`),
       kv('Time of referral', fmtDT(r.time)),
       kv('Transport', r.transport),
-      r.handoverAt ? kv('Left the facility', fmtDT(r.handoverAt)) : null,
+      r.handoverAt ? kv('Left the facility', fmtDT(r.handoverAt) + (r.handoverBy ? ' - ' + r.handoverBy : '')) : null,
       h('hr'),
       kv('Patient', `${p.name} · ${p.age || '?'} y · MRN ${p.mrn || '—'}`),
       kv('Obstetric', `G${p.gravida}P${p.para} · GA ${p.gaWeeks || '?'} wk`),
@@ -160,7 +236,7 @@ function referralNote(p) {
       h('ul', null, r.reasons.map(x => h('li', null, x)), r.otherReason ? h('li', null, r.otherReason) : null),
       h('h3', null, 'Labour status at referral'),
       kv('Labour onset', fmtDT(p.laborOnsetTime)),
-      kv('Membranes', p.romTime ? 'Ruptured ' + fmtDT(p.romTime) : 'Intact'),
+      kv('Membranes', p.romTime ? 'Ruptured ' + fmtDT(p.romTime) : p.romUnknown ? 'Ruptured, time unknown' : 'Intact'),
       lastExam ? kv('Last exam ' + fmtTime(lastExam.time), `${lastExam.v.dilatation} cm · descent ${lastExam.v.descent ?? '—'}/5 · moulding ${lastExam.v.moulding ?? 0} · ${lastExam.v.liquor || ''}`) : null,
       lastBaby ? kv('Last FHR ' + fmtTime(lastBaby.time), `${lastBaby.v.fhr} bpm${lastBaby.v.decel && lastBaby.v.decel !== 'none' ? ' · decel ' + lastBaby.v.decel : ''}`) : null,
       lastContr ? kv('Contractions', `${lastContr.v.count}/10 min`) : null,
@@ -174,20 +250,13 @@ function referralNote(p) {
       h('ul', null, (p.meds || []).map(mm => h('li', null, `${fmtTime(mm.time)} — ${mm.kind}: ${mm.detail || ''}`)),
         (p.meds || []).length ? null : h('li', null, 'None recorded')),
       h('hr'),
-      kv('Referred by', r.referredBy || '________________'),
+      kv('Referred by', referrer(r) || '________________'),
       kv('Receiving feedback', '________________ (please return outcome to the health centre)'),
     ),
-    awaitingHandover(p) ? h('p', { class: 'muted no-print' },
-      'Monitoring continues on the ward board until she leaves with her escort.') : null,
+    waiting && (isLabouring(p) || inPostpartumWatch(p)) ? h('p', { class: 'muted no-print' },
+      'Monitoring continues on the ward board until her departure is recorded.') : null,
     h('div', { class: 'no-print', style: 'display:flex;gap:8px;flex-wrap:wrap' },
-      awaitingHandover(p) ? h('button', {
-        class: 'btn warn', onclick: async () => {
-          if (!(await confirmDialog('Record that she has left the facility with her escort? Monitoring on this device stops.'))) return;
-          recordEvent(p, 'handover', new Date().toISOString(), S.settings, { by: S.settings.midwifeName || null });
-          await savePatient(p);
-          toast('Departure recorded');
-        },
-      }, '🚑 She has left the facility') : null,
+      waiting ? h('button', { class: 'btn warn', onclick: () => recordDeparture(p, root) }, '🚑 She has left the facility') : null,
       h('button', { class: 'btn', onclick: () => window.print() }, '🖨 Print note'),
       h('button', {
         class: 'btn secondary', onclick: async () => {
@@ -199,6 +268,7 @@ function referralNote(p) {
       }, '📤 Share as text'),
     ),
   );
+  return root;
 }
 
 function buildShareText(p) {
@@ -212,7 +282,7 @@ function buildShareText(p) {
     lastExam ? `Exam ${fmtTime(lastExam.time)}: ${lastExam.v.dilatation}cm, descent ${lastExam.v.descent ?? '—'}/5` : '',
     lastBaby ? `FHR ${lastBaby.v.fhr}bpm` : '',
     `Given: ${r.checklist.filter(c => c.done).map(c => c.code).join(', ') || 'see note'}`,
-    `By: ${r.referredBy || ''} ${r.transport}`,
+    `By: ${referrer(r) || '-'}, transport: ${r.transport}`,
   ].filter(Boolean).join('\n');
 }
 

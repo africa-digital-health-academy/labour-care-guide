@@ -35,7 +35,7 @@ export async function seedDemoPatient() {
   add(5, 'baby', { fhr: 138, decel: 'none', liquor: 'I' });
   add(5, 'contractions', { count: 3, durBand: 'b20_40', duration: 30 });
   add(5, 'pulse', { pulse: 84 });
-  add(5, 'vitals', { sys: 110, dia: 70, temp: 36.8, protein: 'nil' });
+  add(5, 'vitals', { sys: 110, dia: 70, temp: 36.8, protein: 'neg' });
   add(5, 'supportive', { companion: 'Y', painRelief: 'Y', oralFluid: 'Y', posture: 'upright' });
 
   // ongoing labour — normal progress with one borderline FHR to show alerting
@@ -52,7 +52,7 @@ export async function seedDemoPatient() {
   add(1, 'exam', { dilatation: proto.activeStartCm + 2, descent: 3, position: 'OA', caput: 0, moulding: 0, liquor: 'C' });
   add(1, 'baby', { fhr: 140, decel: 'none' });
   add(1, 'pulse', { pulse: 88 });
-  add(1, 'vitals', { sys: 114, dia: 74, temp: 37.0, protein: 'nil' });
+  add(1, 'vitals', { sys: 114, dia: 74, temp: 37.0, protein: 'neg' });
   add(1, 'contractions', { count: 4, durBand: 'b40_60', duration: 50 });
   add(1, 'supportive', { companion: 'Y', painRelief: 'Y', oralFluid: 'Y', posture: 'upright' });
 

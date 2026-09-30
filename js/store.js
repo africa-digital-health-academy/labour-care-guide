@@ -54,6 +54,30 @@ export async function savePatient(p) {
   return p;
 }
 
+// ------------------------------------------------------------- initials ----
+// Per-entry initials (F3). Kept per browser session, so a colleague taking
+// over a shared tablet is asked again; the Settings provider name is only a
+// fallback. The initials are always shown on screen before an entry saves.
+
+const BY_KEY = 'lcg-by';
+
+export function getBy() {
+  try {
+    const v = sessionStorage.getItem(BY_KEY);
+    if (v) return v;
+  } catch { /* storage blocked (private mode): fall back */ }
+  return String(S.settings.midwifeName || '').trim().toUpperCase().slice(0, 6);
+}
+
+export function setBy(initials) {
+  const v = String(initials || '').trim().toUpperCase().slice(0, 6);
+  try {
+    if (v) sessionStorage.setItem(BY_KEY, v);
+    else sessionStorage.removeItem(BY_KEY);
+  } catch { /* storage blocked: the value still travels with the entry */ }
+  return v;
+}
+
 export async function removePatient(id) {
   await db.deletePatient(id);
   S.patients = S.patients.filter(p => p.id !== id);

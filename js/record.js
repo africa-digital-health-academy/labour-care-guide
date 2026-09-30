@@ -49,6 +49,32 @@ export function createCase(fields) {
   };
 }
 
+/**
+ * The entries an admission creates: only what was actually examined or asked
+ * (S4). v1 also recorded clear fluid, "no decelerations" and "yes" to pain
+ * relief, oral fluid and mobility that nobody had assessed, and dropped a
+ * temperature taken without a BP.
+ * form: {fhr, contractions, pulse, sys, dia, temp, dilatation, descent,
+ *        presentation, membranes: 'intact' | 'ruptured', liquor, companion}
+ */
+export function admissionEntries(f) {
+  const out = { baby: { fhr: f.fhr } };
+  if (f.contractions != null) out.contractions = { count: f.contractions };
+  if (f.pulse != null) out.pulse = { pulse: f.pulse };
+  const vitals = {};
+  for (const k of ['sys', 'dia', 'temp']) if (f[k] != null) vitals[k] = f[k];
+  if (Object.keys(vitals).length) out.vitals = vitals;
+  const exam = { dilatation: f.dilatation };
+  if (f.descent != null) exam.descent = f.descent;
+  if (f.presentation) exam.presentation = f.presentation;
+  // fluid: intact is an observation; a colour is recorded only when chosen
+  const liquor = f.membranes === 'intact' ? 'I' : f.liquor || null;
+  if (liquor) exam.liquor = liquor;
+  out.exam = exam;
+  if (f.companion) out.supportive = { companion: f.companion };
+  return out;
+}
+
 const fluidSeen = o => (o.type === 'baby' || o.type === 'exam') && o.v && o.v.liquor && o.v.liquor !== 'I';
 
 /**
@@ -129,6 +155,8 @@ export function voidObservation(p, obsId, settings, { by = null, reason = '', at
   const when = at || nowISO();
   const before = stageSnapshot(p);
   o.voided = { at: when, by, reason: why };
+  // a voided admission value no longer describes the admission (card, risk alert)
+  if (o.source === 'admission') mirrorAdmission(p, o.type, {});
   const { resolved, reopened } = unlinkObservation(p, obsId, when, by);
   deriveRom(p);
   deriveStage(p, getProtocol(settings, p));
@@ -150,14 +178,44 @@ export function previewVoid(p, obsId, settings, opts = {}) {
   };
 }
 
+// The admission values the case also keeps on p.admission (summary card,
+// indicators, admission risk), by the type of the admission entry holding them.
+const ADMISSION_MIRROR = {
+  baby: ['fhr'],
+  exam: ['dilatation', 'descent', 'presentation'],
+  pulse: ['pulse'],
+  vitals: ['sys', 'dia', 'temp'],
+  supportive: ['companion'],
+};
+
+/**
+ * A corrected admission entry: p.admission shows the corrected values, and a
+ * value the correction no longer records becomes null. The companion answer
+ * also decides whether she wanted a companion (as at admission).
+ */
+function mirrorAdmission(p, type, v) {
+  if (!p.admission || !Object.prototype.hasOwnProperty.call(ADMISSION_MIRROR, type)) return;
+  const next = { ...p.admission };
+  for (const k of ADMISSION_MIRROR[type]) next[k] = v[k] ?? null;
+  p.admission = next;
+  if (type !== 'supportive') return;
+  if (v.companion) p.companionWanted = v.companion !== 'D';
+  else delete p.companionWanted;
+}
+
 /** Correct an entry: void it, then record the corrected values in its place. */
 export function correctObservation(p, obsId, newValues, settings, { by = null, reason = 'Corrected entry', time } = {}) {
   const old = (p.obs || []).find(x => x.id === obsId);
   if (!old) throw new Error('Entry not found');
+  const before = stageSnapshot(p);
   const voided = voidObservation(p, obsId, settings, { by, reason });
   const applied = applyObservations(p, time || old.time, { [old.type]: newValues }, settings,
     { by, source: old.source || 'entry', replaces: obsId });
-  return { voided, ...applied };
+  const fresh = applied.obs[0];
+  if (fresh && old.source === 'admission') mirrorAdmission(p, old.type, fresh.v);
+  // the net stage change of the whole correction: the void half alone would
+  // report a reversion, the re-entry half alone nothing
+  return { voided, ...applied, transitions: transitions(before, stageSnapshot(p)) };
 }
 
 /**
@@ -192,7 +250,7 @@ export function applyReferral(p, referral, { by = null } = {}) {
   p.status = 'referred';
   const reasons = (referral.reasons || []).join(', ');
   p.notes = [...(p.notes || []),
-    { time: referral.time, by, text: `REFERRED to ${referral.facility || 'hospital'}: ${reasons}`, plan: 'referral' }];
+    { id: uid(), time: referral.time, by, text: `REFERRED to ${referral.facility || 'hospital'}: ${reasons}`, plan: 'referral' }];
   return p.referral;
 }
 

@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.0.0-dev (unreleased) - milestone M3, 30 September 2026
+
+The screens now feed the M2 engine and keep what the midwife types.
+
+- Safe rendering (S3): a background save (the 30-second heartbeat, another
+  woman's alert) no longer rebuilds a page with a form in progress; only the
+  case header, the alert strip and the chart refresh. Forms mark themselves in
+  progress and saved.
+- Honest admission (S4, F4): only what was examined or asked is recorded - no
+  invented "clear fluid", "no decelerations" or "yes" to pain relief, fluid and
+  mobility; a temperature without a BP is kept. New: labour onset
+  (spontaneous or induced, required), rupture time "unknown" (the form's U),
+  fluid colour when ruptured, companion present / wanted / declines. Tapping a
+  question's label text no longer selects its first answer.
+- Initials on every entry (F3): the wizard, acknowledgements, medication,
+  notes, emergencies, voids, corrections, resolutions, referral, departure,
+  admission and birth record all ask for the midwife's initials, kept for her
+  session on a shared tablet.
+- Void, correct and resolve (S5): entries can be voided or corrected with a
+  reason and initials, shown struck through, never deleted; the confirmation
+  says what the stage and the alerts will do; alerts can be resolved by hand;
+  only demo cases can be deleted, real cases are closed.
+- WHO codes in the wizard (F1, F9): supportive care Yes / No / Declined, fluid
+  I, C, M+, M++, M+++, B, urine Negative, Trace, + to ++++; untouched defaults
+  are stored as such for the audit.
+- Second stage (F2): a "Pushing began" button starts the WHO clock.
+- Birth record: caesarean section at hospital level, stillbirth timing,
+  correct-a-birth-record, initials.
+- Postpartum haemorrhage card (N3): running measured total against the 2025
+  thresholds, drape readings, the trigger banner and the first-response bundle
+  checklist with time and initials.
+- Postpartum watch (N4): mother, baby and blood-loss checks in the wizard, due
+  chips on the case and a "Postpartum watch" section on the ward board; no
+  baby checks after a stillbirth.
+- The ward board and the alert strip count only open alerts; closed alerts
+  still awaiting acknowledgement are shown apart.
+- Phone width: every screen fits 360 px without sideways scrolling.
+- Independent clinical review, two passes. Pass 1 found no critical issue and
+  three to fix before facility use, all fixed: the birth record saved
+  untouched "placenta complete", "perineum intact" and "no resuscitation" as
+  facts; admission recorded an unexamined cephalic presentation; postpartum
+  checks timed before the recorded birth dropped out of the watch. Pass 2
+  verified them and added a remedy note for a birth recorded late, and voided
+  admission entries now clear the admission record.
+- Tests: 297, up from 264.
+
 ## 2.0.0-dev (unreleased) - milestone M2, 30 September 2026
 
 Clinical engine brought to the WHO standard. The screens are not redesigned
