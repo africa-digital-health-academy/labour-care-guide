@@ -10,9 +10,10 @@
 // Method: the active first stage and the second stage are cut into windows of
 // each row's recording interval (protocol.recording, or the schedules when a
 // protocol has none), like the columns of the paper form. A window is met
-// when a non-voided entry of that row falls inside it; a window counts only
-// once its end plus the 10-minute grace of the due chips has passed inside
-// the stage. Voided entries never count. Defaulted values (committed by the
+// when a non-voided entry of that row falls inside it; a window counts once
+// it has ended inside the stage (for a stage still running, once the
+// 10-minute grace of the due chips has also passed). Voided entries never
+// count. Defaulted values (committed by the
 // wizard without being touched) count, but are reported separately.
 // "Circled" is automatic in the digital form - every alert value raises an
 // alert - so what is audited is the human step: acknowledged with the action
@@ -36,12 +37,13 @@ const SECTION_TYPES = {
 
 /**
  * Consecutive slots of `intervalMin` from `from`, like the columns of the
- * paper form: a slot is met when an entry falls inside it. A slot is counted
- * only once its end plus the grace has passed inside the stage, so a stage
- * that ends mid-slot is not charged for it. Returns {total, met}.
+ * paper form: a slot is met when an entry falls inside it. A slot counts
+ * once it has ended inside the stage; while the stage is still running the
+ * due chips' grace applies first, so an entry due a minute ago is not yet
+ * charged. Returns {total, met}.
  */
-function windows(times, from, to, intervalMin) {
-  const I = intervalMin * MIN, G = GRACE_MIN * MIN;
+function windows(times, from, to, intervalMin, ongoing = false) {
+  const I = intervalMin * MIN, G = ongoing ? GRACE_MIN * MIN : 0;
   let total = 0, met = 0;
   for (let w = from; w + I + G <= to; w += I) {
     total++;
@@ -65,8 +67,11 @@ function bounds(p, now) {
     ? { from: toMs(p.activeStartTime), to: p.secondStageStart ? toMs(p.secondStageStart) : end } : null;
   const second = p.secondStageStart ? { from: toMs(p.secondStageStart), to: end } : null;
   const start = active ? active.from : second ? second.from : null;
-  return { active, second, start, end };
+  return { active, second, start, end, ongoing: !birth && !handover };
 }
+
+// a span still running at `now` (its end is now, not a birth or a handover)
+const running = (b, to) => b.ongoing && to === b.end;
 
 function sectionAdherence(p, types, b, rec) {
   let total = 0, met = 0;
@@ -75,7 +80,7 @@ function sectionAdherence(p, types, b, rec) {
     for (const type of types) {
       const interval = rec[stage][type];
       if (!interval) continue;
-      const w = windows(entryTimes(p, type), span.from, span.to, interval);
+      const w = windows(entryTimes(p, type), span.from, span.to, interval, running(b, span.to));
       total += w.total; met += w.met;
     }
   }
@@ -107,7 +112,7 @@ function medication(p, proto, b) {
     .filter(m => !m.voided && m.kind === 'oxytocin' && !isOxytocinStop(m)).map(m => toMs(m.time)));
   let total = 0, met = 0;
   for (const x of periods) {
-    const w = windows(times, x.from, x.to, proto.oxytocinCheckMin);
+    const w = windows(times, x.from, x.to, proto.oxytocinCheckMin, running(b, x.to));
     total += w.total; met += w.met;
   }
   return { windows: total, met, rate: rateOf(met, total) };
@@ -177,7 +182,7 @@ export function auditCase(p, proto, now = new Date()) {
     medication: medication(p, proto, b),
     // Annex 8 section 7: an assessment and plan per hourly column
     decisions: (() => {
-      const w = windows((p.notes || []).filter(n => !n.voided && (n.text || n.plan)).map(n => toMs(n.time)), b.start, b.end, 60);
+      const w = windows((p.notes || []).filter(n => !n.voided && (n.text || n.plan)).map(n => toMs(n.time)), b.start, b.end, 60, b.ongoing);
       return { windows: w.total, met: w.met, rate: rateOf(w.met, w.total) };
     })(),
     initials: initials(p, b),

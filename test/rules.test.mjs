@@ -5,8 +5,55 @@ import assert from 'node:assert/strict';
 import {
   evaluateObs, evaluateTime, admissionRiskAlerts, birthAlerts, RESOLVE_ON,
 } from '../js/alerts.js';
-import { PROTOCOLS, alertLineAnchor } from '../js/protocol.js';
+import { PROTOCOLS, alertLineAnchor, secondStageClockStart } from '../js/protocol.js';
+import { applyObservations } from '../js/record.js';
 import { NOW, iso, mkPatient, LCG, ETH, codes } from './helpers.mjs';
+
+const MIN = 60000;
+
+// Manual Table 6 lag limits, every centimetre, at one minute under and exactly at the limit.
+for (const [cm, limit] of Object.entries(PROTOCOLS.lcg.dilatationLagMin)) {
+  test(`LCG progress at ${cm} cm: silent at ${limit - 1} min, alert at ${limit} min`, () => {
+    const base = +NOW - 20 * 3600000;
+    const t = m => new Date(base + m * MIN).toISOString();
+    const p = mkPatient({ status: 'latent', activeStartTime: null, admission: { time: t(0) } });
+    applyObservations(p, t(0), { exam: { dilatation: Number(cm) } }, LCG);
+    const early = applyObservations(p, t(limit - 1), { exam: { dilatation: Number(cm) } }, LCG);
+    assert.ok(!codes(early.added).includes('lcg_progress'));
+    const late = applyObservations(p, t(limit), { exam: { dilatation: Number(cm) } }, LCG);
+    assert.ok(codes(late.added).includes('lcg_progress'));
+  });
+}
+
+// Manual Table 6 second-stage limits, exact boundaries, counted from pushing.
+for (const [para, limitMin, label] of [[0, 180, 'nulliparous'], [2, 120, 'multiparous']]) {
+  test(`second stage (${label}): silent at ${limitMin - 1} min, alert at ${limitMin} min from pushing`, () => {
+    const ago = m => new Date(+NOW - m * MIN).toISOString();
+    const p = mkPatient({ para, status: 'second', secondStageStart: ago(limitMin + 30) });
+    const push = { id: 'push', type: 'event', time: ago(limitMin), v: { event: 'pushing' } };
+    p.obs.push(push);
+    assert.ok(codes(evaluateTime(p, LCG, NOW)).includes('second_long'));
+    push.time = ago(limitMin - 1);
+    assert.ok(!codes(evaluateTime(p, LCG, NOW)).includes('second_long'));
+  });
+}
+
+test('F2: a P recorded after the last exam below 10 cm starts the clock; an earlier urge does not', () => {
+  const p = mkPatient({ status: 'second', activeStartTime: iso(6), secondStageStart: iso(2.5) });
+  p.obs.push({ id: 'e8', type: 'exam', time: iso(4), v: { dilatation: 8 } });
+  p.obs.push({ id: 'e10', type: 'exam', time: iso(2.5), v: { dilatation: 10 } });
+  const push = { id: 'push', type: 'event', time: iso(3), v: { event: 'pushing' } };
+  p.obs.push(push);
+  assert.equal(secondStageClockStart(p, PROTOCOLS.lcg), iso(3));
+  push.time = iso(5);
+  assert.equal(secondStageClockStart(p, PROTOCOLS.lcg), iso(2.5));
+});
+
+test('S7 (v1 record, no exam at active start): the line starts at the admission dilatation, never a later exam', () => {
+  const p = mkPatient({ activeStartTime: iso(4), admission: { time: iso(4), dilatation: 5 } });
+  p.obs.push({ id: 'e1', type: 'exam', time: iso(1), v: { dilatation: 8 } });
+  assert.deepEqual(alertLineAnchor(PROTOCOLS.ethiopia2021, p), { time: iso(4), cm: 5 });
+});
 
 // [code, observation type, firing values, silent values]
 const OBS_CASES = [

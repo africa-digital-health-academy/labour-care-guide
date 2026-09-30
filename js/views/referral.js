@@ -11,7 +11,7 @@ import { h, field, segmented, toast, fmtDT, fmtTime, confirmDialog } from '../ui
 import { t } from '../i18n.js';
 import { S, savePatient } from '../store.js';
 import { lastObs, exams, awaitingHandover } from '../protocol.js';
-import { recordEvent } from '../record.js';
+import { recordEvent, applyReferral } from '../record.js';
 
 const REASONS = [
   ['prolonged', 'Prolonged / obstructed labour'],
@@ -116,17 +116,15 @@ export function renderReferralTab(p) {
       // warn but never block — transport must not wait for paperwork
       toast(`Note: ${missing.length} pre-referral item(s) not ticked`, 'danger');
     }
-    p.referral = {
+    // the record layer marks her "not yet left", so monitoring continues (S8)
+    applyReferral(p, {
       time: new Date().toISOString(),
       reasons: [...selected].map(code => (REASONS.find(r => r[0] === code) || [code, code])[1]),
       otherReason: m.otherReason,
       checklist: CHECKLIST.filter(([, , show]) => show(selected)).map(([code, label]) => ({ code, label, done: !!checks[code] })),
       facility: m.facility, phone: m.phone, transport: m.transport,
       referredBy: S.settings.midwifeName || '',
-    };
-    p.status = 'referred';
-    p.notes = p.notes || [];
-    p.notes.push({ time: p.referral.time, text: 'REFERRED to ' + (m.facility || 'hospital') + ': ' + p.referral.reasons.join(', '), plan: 'referral' });
+    }, { by: S.settings.midwifeName || null });
     await savePatient(p);
     toast('Referral recorded — note ready ✓');
     location.hash = `#/p/${p.id}/referral`;

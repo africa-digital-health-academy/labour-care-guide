@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   pphTrigger, haemodynamicSigns, bloodLossTotal, birthAlerts, resolveAlert, PPH_BUNDLE, AMTSL_STEPS, EMERGENCIES,
 } from '../js/alerts.js';
-import { applyObservations } from '../js/record.js';
+import { applyObservations, applyBirth, voidObservation } from '../js/record.js';
 import { iso, mkPatient, LCG } from './helpers.mjs';
 
 function born(delivery = {}) {
@@ -78,7 +78,7 @@ test('an estimated loss of 500 mL on the birth record raises PPH at birth', () =
   assert.ok(!birthAlerts(born({ eblMl: 250 })).some(a => a.code === 'pph'));
 });
 
-test('after a PPH episode is closed, it re-opens only if more blood loss is measured', () => {
+test('after a PPH episode is closed, nothing new keeps it closed; more measured blood re-opens it', () => {
   const p = born();
   applyObservations(p, iso(1.5), { bloodloss: { ml: 600 } }, LCG);
   const one = p.alerts.find(a => a.code === 'pph');
@@ -87,6 +87,49 @@ test('after a PPH episode is closed, it re-opens only if more blood loss is meas
   assert.ok(!calm.added.some(a => a.code === 'pph'));
   const more = applyObservations(p, iso(1.2), { bloodloss: { ml: 750 } }, LCG);
   assert.equal(more.added.find(a => a.code === 'pph').episode, 2);
+});
+
+test('after a PPH episode is closed, a new abnormal sign re-opens it even without more blood', () => {
+  const p = born();
+  applyObservations(p, iso(1.5), { bloodloss: { ml: 600 } }, LCG);
+  resolveAlert(p, p.alerts.find(a => a.code === 'pph').id, { by: 'TE', reason: 'controlled' });
+  // pulse 112 and systolic 92: below the stand-alone pulse and hypotension alerts, a PPH sign after 600 mL
+  const shock = applyObservations(p, iso(1.25), { ppMother: { pulse: 112, sys: 92, dia: 64 } }, LCG);
+  const again = shock.added.find(a => a.code === 'pph');
+  assert.equal(again.episode, 2);
+  assert.match(again.title, /pulse 112/);
+});
+
+test('an open PPH alert shows the latest measured total', () => {
+  const p = born();
+  applyObservations(p, iso(1.5), { bloodloss: { ml: 550 } }, LCG);
+  applyObservations(p, iso(1.2), { bloodloss: { ml: 900 } }, LCG);
+  const open = p.alerts.filter(a => a.code === 'pph');
+  assert.equal(open.length, 1);
+  assert.match(open[0].title, /900 mL/);
+});
+
+test('voiding a postpartum check does not close a PPH raised by the birth record', () => {
+  const p = mkPatient({ status: 'second', secondStageStart: iso(3) });
+  applyBirth(p, { time: iso(2), outcome: 'live', eblMl: 600, ppVitals: {} }, {}, LCG);
+  const pph = p.alerts.find(a => a.code === 'pph');
+  const check = applyObservations(p, iso(1.5), { ppMother: { pulse: 90, sys: 110, dia: 70 } }, LCG).obs[0];
+  voidObservation(p, check.id, LCG, { reason: 'entered on the wrong woman' });
+  assert.equal(pph.resolved, false);
+});
+
+test('an entry-raised PPH closes when its only qualifying reading is voided, and stays open while others still qualify', () => {
+  const p = born();
+  const r = applyObservations(p, iso(1.5), { bloodloss: { ml: 600 } }, LCG);
+  const pph = r.added.find(a => a.code === 'pph');
+  voidObservation(p, r.obs[0].id, LCG, { reason: 'drape reading of another woman' });
+  assert.equal(pph.resolved, true);
+  assert.equal(pph.resolvedHow, 'void');
+  const q = born();
+  applyObservations(q, iso(1.6), { bloodloss: { ml: 550 } }, LCG);
+  const dup = applyObservations(q, iso(1.5), { bloodloss: { ml: 650 } }, LCG).obs[0];
+  voidObservation(q, dup.id, LCG, { reason: 'duplicate reading' });
+  assert.equal(q.alerts.find(a => a.code === 'pph').resolved, false);
 });
 
 test('the trigger is only checked in the 24 h after birth', () => {

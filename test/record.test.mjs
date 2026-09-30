@@ -4,9 +4,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyObservations, voidObservation, previewVoid, correctObservation, recordEvent, applyBirth, voidDelivery,
+  createCase, applyReferral,
 } from '../js/record.js';
 import { addAlerts } from '../js/alerts.js';
-import { PROTOCOLS, pushingStart, secondStageClockStart, isLabouring, deriveStage } from '../js/protocol.js';
+import {
+  PROTOCOLS, pushingStart, secondStageClockStart, isLabouring, deriveStage, awaitingHandover,
+} from '../js/protocol.js';
+import { CASE_SCHEMA, migrateCase, migrateAll } from '../js/migrate.js';
 import { iso, mkPatient, LCG } from './helpers.mjs';
 
 const latent = () => mkPatient({ status: 'latent', activeStartTime: null });
@@ -140,4 +144,61 @@ test('deriveStage keeps a v1 record that stored the admission dilatation but no 
   deriveStage(p, PROTOCOLS.lcg);
   assert.equal(p.activeStartTime, iso(6));
   assert.equal(p.status, 'active');
+});
+
+// ------------------------------------------ review pass 1 regressions ----
+
+test('a new case is created in the current schema, so a reload does not migrate it again', () => {
+  const p = createCase({ id: 'n1', createdAt: iso(1), protocolId: 'lcg', name: 'New' });
+  assert.equal(p.schemaVersion, CASE_SCHEMA);
+  assert.equal(migrateCase(p, LCG).changed, false);
+  assert.equal(migrateAll([p], LCG).changed, false, 'no pre-migration snapshot on every load');
+});
+
+test('S8 regression: a woman referred on this version is still monitored after a reload', () => {
+  const p = createCase({
+    id: 'r1', createdAt: iso(3), protocolId: 'lcg', para: 1,
+    admission: { time: iso(3) }, status: 'active', activeStartTime: iso(3),
+  });
+  applyReferral(p, { time: iso(1), reasons: ['Prolonged labour'], checklist: [], facility: 'Hospital' }, { by: 'TE' });
+  assert.equal(p.referral.handoverAt, null);
+  assert.equal(p.notes[p.notes.length - 1].by, 'TE');
+  const reloaded = migrateCase(JSON.parse(JSON.stringify(p)), LCG).p;
+  assert.equal(awaitingHandover(reloaded), true);
+  assert.equal(isLabouring(reloaded), true);
+  // even a copy saved without a schema stamp keeps the explicit "not yet left"
+  const unstamped = JSON.parse(JSON.stringify(p));
+  delete unstamped.schemaVersion;
+  assert.equal(awaitingHandover(migrateCase(unstamped, LCG).p), true);
+  assert.throws(() => applyReferral(p, { time: iso(0), reasons: [] }), /already recorded/);
+});
+
+test('ROM follows the entries: voiding the only fluid finding clears it; a later finding sets it again', () => {
+  const p = latent();
+  const clear = applyObservations(p, iso(3), { baby: { fhr: 140, liquor: 'C' } }, LCG).obs[0];
+  assert.equal(p.romTime, iso(3));
+  voidObservation(p, clear.id, LCG, { reason: 'membranes intact - mis-tap' });
+  assert.equal(p.romTime, null);
+  applyObservations(p, iso(1), { exam: { dilatation: 6, liquor: 'C' } }, LCG);
+  assert.equal(p.romTime, iso(1));
+});
+
+test('ROM reported at admission is never re-derived from entries', () => {
+  const p = mkPatient({ romTime: iso(10) });
+  const clear = applyObservations(p, iso(3), { baby: { fhr: 140, liquor: 'C' } }, LCG).obs[0];
+  voidObservation(p, clear.id, LCG, { reason: 'wrong woman' });
+  assert.equal(p.romTime, iso(10));
+});
+
+test('at birth the labour findings close and the maternal ones stay; voiding the birth re-opens them', () => {
+  const p = mkPatient({ status: 'second', secondStageStart: iso(3) });
+  applyObservations(p, iso(2.5), { baby: { fhr: 170 }, vitals: { sys: 150, dia: 95 } }, LCG);
+  const r = applyBirth(p, { time: iso(1), outcome: 'live', placentaComplete: 'Y' }, {}, LCG);
+  const fhr = p.alerts.find(a => a.code === 'fhr_abn');
+  assert.equal(fhr.resolvedHow, 'birth');
+  assert.ok(r.resolved.includes(fhr));
+  assert.equal(p.alerts.find(a => a.code === 'htn').resolved, false, 'raised BP stays open after birth');
+  const v = voidDelivery(p, LCG, { reason: 'recorded on the wrong woman' });
+  assert.equal(fhr.resolved, false);
+  assert.ok(v.reopened.includes(fhr));
 });

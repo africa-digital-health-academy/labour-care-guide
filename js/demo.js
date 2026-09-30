@@ -4,7 +4,7 @@
 
 import { S, savePatient, uid } from './store.js';
 import { getProtocol } from './protocol.js';
-import { applyObservations } from './record.js';
+import { applyObservations, createCase } from './record.js';
 import { toast } from './ui.js';
 
 export async function seedDemoPatient() {
@@ -12,7 +12,7 @@ export async function seedDemoPatient() {
   const now = Date.now();
   const hrs = h => new Date(now - h * 3600000).toISOString();
 
-  const p = {
+  const p = createCase({
     id: uid(), createdAt: hrs(5), demo: true, // demo cases never count in the indicators
     onsetMode: 'spontaneous', romUnknown: false,
     name: 'DEMO — Abeba Tesfaye', age: 24, mrn: 'DEMO-001', phone: '', kebele: 'Demo kebele 01',
@@ -23,9 +23,8 @@ export async function seedDemoPatient() {
       sys: 110, dia: 70, temp: 36.8, presentation: 'cephalic', companion: 'Y',
     },
     status: 'active', activeStartTime: hrs(5), secondStageStart: null,
-    obs: [], meds: [], alerts: [], notes: [],
-    protocolId: proto.id, protocolOverride: null, oxytocinRunning: false, referral: null, delivery: null, newborn: null,
-  };
+    protocolId: proto.id,
+  });
 
   // entries go through the record layer, exactly as the wizard's do
   const add = (hAgo, type, v) => applyObservations(p, hrs(hAgo), { [type]: v }, S.settings,

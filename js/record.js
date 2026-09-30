@@ -11,10 +11,12 @@
 // labour stage from the surviving entries, so voiding a mistyped 10 cm exam
 // takes the woman back to the active first stage with its timers.
 
-import { getProtocol, deriveStage, stageSnapshot, toMs } from './protocol.js';
+import { getProtocol, deriveStage, stageSnapshot, toMs, activeObs, byTime } from './protocol.js';
 import {
-  evaluateObs, addAlerts, reconcileAlerts, birthAlerts, closeTimeAlerts, resolveWhere, unlinkObservation,
+  evaluateObs, addAlerts, reconcileAlerts, birthAlerts, closeTimeAlerts, resolveWhere, reopenWhere,
+  unlinkObservation, LABOUR_ONLY,
 } from './alerts.js';
+import { CASE_SCHEMA } from './migrate.js';
 import { uid } from './db.js';
 
 // Representative seconds for the wizard's contraction-duration bands.
@@ -30,6 +32,36 @@ export function normalizeValues(type, raw) {
     v.duration = DURATION_BAND_S[v.durBand];
   }
   return v;
+}
+
+/**
+ * A new case, born in the current schema. An unstamped case would be run
+ * through the migration again on the next load, and the schema 3 step would
+ * then mark an open referral as departed.
+ */
+export function createCase(fields) {
+  return {
+    schemaVersion: CASE_SCHEMA,
+    obs: [], meds: [], alerts: [], notes: [], deliveryHistory: [],
+    onsetMode: 'unknown', romUnknown: false, oxytocinRunning: false, protocolOverride: null,
+    referral: null, delivery: null, newborn: null,
+    ...fields,
+  };
+}
+
+const fluidSeen = o => (o.type === 'baby' || o.type === 'exam') && o.v && o.v.liquor && o.v.liquor !== 'I';
+
+/**
+ * ROM time from the entries: the earliest surviving entry that found fluid,
+ * so voiding a mis-tapped "clear" entry also clears the rupture. A time
+ * reported at admission (no romSource) or recorded as unknown (form code U)
+ * is never touched.
+ */
+function deriveRom(p) {
+  if (p.romUnknown || (p.romTime && !p.romSource)) return;
+  const first = activeObs(p).filter(fluidSeen).sort(byTime)[0];
+  p.romTime = first ? first.time : null;
+  p.romSource = first ? first.id : null;
 }
 
 /** Stage changes between two snapshots, for toasts and the void confirmation. */
@@ -69,12 +101,9 @@ export function applyObservations(p, timeISO, values, settings, opts = {}) {
     if (replaces) o.replaces = replaces;
     p.obs.push(o);
     created.push(o);
-    // fluid seen: membranes have ruptured - unless ROM was recorded with an unknown time (form code U)
-    if ((type === 'baby' || type === 'exam') && v.liquor && v.liquor !== 'I' && !p.romTime && !p.romUnknown) {
-      p.romTime = timeISO;
-    }
   }
 
+  deriveRom(p);
   deriveStage(p, proto);
   const added = [];
   for (const o of created) {
@@ -101,6 +130,7 @@ export function voidObservation(p, obsId, settings, { by = null, reason = '', at
   const before = stageSnapshot(p);
   o.voided = { at: when, by, reason: why };
   const { resolved, reopened } = unlinkObservation(p, obsId, when, by);
+  deriveRom(p);
   deriveStage(p, getProtocol(settings, p));
   const cleared = reconcileAlerts(p, settings);
   const after = stageSnapshot(p);
@@ -151,8 +181,25 @@ export function recordEvent(p, kind, timeISO, settings, { by = null } = {}) {
 }
 
 /**
- * Record the birth. Labour clocks stop (their time alerts close) and the
- * birth rules run: APGAR, retained placenta, stillbirth, PPH trigger.
+ * Record a referral. handoverAt is written as null - "not yet left" - so she
+ * stays monitored until her departure is recorded (S8), and a reload never
+ * mistakes the referral for a pre-M2 one.
+ */
+export function applyReferral(p, referral, { by = null } = {}) {
+  if (p.referral) throw new Error('A referral is already recorded for this case');
+  if (!referral || !validTime(referral.time)) throw new Error('A valid referral time is required');
+  p.referral = { ...referral, handoverAt: null };
+  p.status = 'referred';
+  const reasons = (referral.reasons || []).join(', ');
+  p.notes = [...(p.notes || []),
+    { time: referral.time, by, text: `REFERRED to ${referral.facility || 'hospital'}: ${reasons}`, plan: 'referral' }];
+  return p.referral;
+}
+
+/**
+ * Record the birth. Labour clocks stop (their time alerts close), findings
+ * about the labour itself close, and the birth rules run: APGAR, retained
+ * placenta, stillbirth, PPH trigger.
  */
 export function applyBirth(p, delivery, newborn, settings, { by = null, enteredAt } = {}) {
   if (p.delivery) throw new Error('A birth is already recorded - void it before recording another');
@@ -160,7 +207,10 @@ export function applyBirth(p, delivery, newborn, settings, { by = null, enteredA
   p.delivery = { ...delivery, by };
   p.newborn = newborn ? { ...newborn } : null;
   p.status = 'delivered';
-  const resolved = closeTimeAlerts(p, delivery.time, 'birth');
+  const resolved = [
+    ...closeTimeAlerts(p, delivery.time, 'birth'),
+    ...resolveWhere(p, a => a.source === 'obs' && LABOUR_ONLY.includes(a.code), delivery.time, 'birth'),
+  ];
   const added = addAlerts(p, birthAlerts(p), 'birth', { time: delivery.time, raisedAt: enteredAt || nowISO() });
   return { added, resolved };
 }
@@ -179,7 +229,10 @@ export function voidDelivery(p, settings, { by = null, reason = '', at } = {}) {
   p.delivery = null;
   p.newborn = null;
   const resolved = resolveWhere(p, a => a.source === 'birth', when, 'void', by);
+  // labour findings the birth had closed apply again (time rules re-fire on the tick)
+  const reopened = reopenWhere(p, a => a.resolvedHow === 'birth' && a.source !== 'time');
   p.status = p.referral && !p.referral.handoverAt ? 'referred' : 'latent';
   deriveStage(p, getProtocol(settings, p));
-  return { status: p.status, resolved };
+  reconcileAlerts(p, settings);
+  return { status: p.status, resolved, reopened };
 }

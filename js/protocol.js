@@ -282,6 +282,23 @@ export function pushingStart(p, from) {
 }
 
 /**
+ * The P that starts the LCG second-stage clock: the first pushing event after
+ * the last exam below 10 cm. A P between that exam and the 10 cm exam counts
+ * (pushing began while full dilatation was being reached - the earlier, safer
+ * start); a P before it was a premature urge and is ignored. Null until then.
+ */
+export function secondStagePushing(p) {
+  if (!p.secondStageStart) return null;
+  const full = toMs(p.secondStageStart);
+  const below = exams(p).filter(o => toMs(o.time) < full && o.v.dilatation < 10);
+  const floor = below.length ? toMs(below[below.length - 1].time) : -Infinity;
+  const ev = activeObs(p)
+    .filter(o => o.type === 'event' && o.v && o.v.event === 'pushing' && toMs(o.time) > floor)
+    .sort(byTime)[0];
+  return ev ? ev.time : null;
+}
+
+/**
  * Start of the second-stage clock. LCG: the start of the active second stage,
  * when pushing began (manual Table 6; F2). Until pushing is recorded the clock
  * runs from full dilatation, which is earlier, so the alert can only come
@@ -290,7 +307,7 @@ export function pushingStart(p, from) {
 export function secondStageClockStart(p, proto) {
   if (!p.secondStageStart) return null;
   if (proto.secondStageClock !== 'pushing') return p.secondStageStart;
-  return pushingStart(p, p.secondStageStart) || p.secondStageStart;
+  return secondStagePushing(p) || p.secondStageStart;
 }
 
 /** Anchor of the monitoring schedule: stage start, falling back to admission. */
@@ -454,8 +471,10 @@ export function timeReachedCurrentDilatation(p) {
 export function alertLineAnchor(proto, p) {
   if (!proto.alertActionLines || !p.activeStartTime) return null;
   const start = toMs(p.activeStartTime);
-  const first = exams(p).find(o => toMs(o.time) >= start && o.v.dilatation >= proto.activeStartCm);
-  let cm = first ? first.v.dilatation : null;
+  // the exam that opened the active phase; for v1 records that kept the
+  // admission dilatation only on the form, that value - never a later exam
+  const opening = exams(p).find(o => toMs(o.time) === start && o.v.dilatation >= proto.activeStartCm);
+  let cm = opening ? opening.v.dilatation : null;
   if (cm == null && p.admission && p.admission.dilatation != null && toMs(p.admission.time) === start) {
     cm = p.admission.dilatation;
   }

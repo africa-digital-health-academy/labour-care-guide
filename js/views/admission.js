@@ -8,7 +8,7 @@ import { t } from '../i18n.js';
 import { S, savePatient, uid } from '../store.js';
 import { getProtocol } from '../protocol.js';
 import { addAlerts, admissionRiskAlerts } from '../alerts.js';
-import { applyObservations } from '../record.js';
+import { applyObservations, createCase } from '../record.js';
 import { showAlertAckModal } from '../wizard.js';
 
 // Country dial codes — Ethiopia (+251) first and default; neighbours and common
@@ -162,7 +162,8 @@ export function renderAdmission() {
 
     const proto = getProtocol(S.settings, null);
     const admTime = localInputToISO(m.admissionTime) || new Date().toISOString();
-    const p = {
+    // created in the current schema so a reload never re-migrates it (record.js)
+    const p = createCase({
       id: uid(), createdAt: new Date().toISOString(),
       name: m.name.trim(), age: m.age, mrn: m.mrn, phone: m.phone, kebele: m.kebele,
       gravida: m.gravida, para: m.para, gaWeeks: m.gaWeeks,
@@ -174,14 +175,9 @@ export function renderAdmission() {
         fhr: m.fhr, pulse: m.pulse, sys: m.sys, dia: m.dia, temp: m.temp,
         presentation: m.presentation, companion: m.companion,
       },
-      status: m.dilatation >= proto.activeStartCm ? 'active' : 'latent',
-      activeStartTime: m.dilatation >= proto.activeStartCm ? admTime : null,
-      secondStageStart: m.dilatation >= 10 ? admTime : null,
-      obs: [], meds: [], alerts: [], notes: [],
-      protocolId: proto.id, protocolOverride: null, oxytocinRunning: false,
-      referral: null, delivery: null, newborn: null,
-    };
-    if (m.dilatation >= 10) p.status = 'second';
+      status: 'latent', activeStartTime: null, secondStageStart: null, // derived from the admission exam below
+      protocolId: proto.id,
+    });
 
     // baseline observations so the chart starts populated. Recording only what
     // was actually entered (S4) arrives with the admission-form rework in M3.

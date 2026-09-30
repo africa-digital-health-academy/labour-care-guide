@@ -34,8 +34,9 @@ test('a fully recorded LCG scores 100 and counts as completed', () => {
   assert.equal(a.applicable, true);
   assert.equal(a.score, 100);
   assert.equal(a.completed, true);
-  assert.deepEqual([a.sections.baby.met, a.sections.baby.windows], [7, 7]);
-  assert.deepEqual([a.sections.supportive.met, a.sections.supportive.windows], [3, 3]);
+  // 4 h ended by birth: eight 30-min cells, the last one (the 30 min before birth) included
+  assert.deepEqual([a.sections.baby.met, a.sections.baby.windows], [8, 8]);
+  assert.deepEqual([a.sections.supportive.met, a.sections.supportive.windows], [4, 4]);
   assert.equal(a.sections.medication, null, 'no oxytocin: not applicable');
   assert.equal(a.durations.activeMin, 240);
   assert.equal(a.durations.activeOver12h, false);
@@ -44,11 +45,22 @@ test('a fully recorded LCG scores 100 and counts as completed', () => {
 
 test('hourly FHR, two-hourly supportive care and notes, and one unsigned entry lower the score', () => {
   const a = auditCase(lcgCase({ fhrEvery: 60, supportiveEvery: 120, notesEvery: 120, unsigned: true }), PROTOCOLS.lcg, NOW);
-  assert.deepEqual([a.sections.baby.met, a.sections.baby.windows], [4, 7]);
-  assert.deepEqual([a.sections.supportive.met, a.sections.supportive.windows], [2, 3]);
-  assert.deepEqual([a.sections.decisions.met, a.sections.decisions.windows], [2, 3]);
+  assert.deepEqual([a.sections.baby.met, a.sections.baby.windows], [4, 8]);
+  assert.deepEqual([a.sections.supportive.met, a.sections.supportive.windows], [2, 4]);
+  assert.deepEqual([a.sections.decisions.met, a.sections.decisions.windows], [2, 4]);
   assert.deepEqual([a.sections.initials.met, a.sections.initials.windows], [4, 5]);
   assert.ok(a.score < 100);
+});
+
+test('while the stage is still running, a cell due within the grace is not yet charged', () => {
+  // active stage started 2 h 35 min ago, still running; FHR every 30 min up to 2 h 30 min
+  const s = +NOW - 155 * MIN;
+  const t = m => new Date(s + m * MIN).toISOString();
+  const p = mkPatient({ name: 'Running', para: 0, onsetMode: 'spontaneous', activeStartTime: t(0), status: 'active' });
+  for (let m = 0; m <= 120; m += 30) p.obs.push({ id: 'b' + m, type: 'baby', time: t(m), v: { fhr: 140 }, by: 'TE', flags: [] });
+  const a = auditCase(p, PROTOCOLS.lcg, NOW);
+  // cells 0..120 are charged (all met); the 120-150 cell ended 5 min ago, inside the grace
+  assert.deepEqual([a.sections.baby.met, a.sections.baby.windows], [4, 4]);
 });
 
 test('voided entries never count; defaulted values are reported, not penalised', () => {
@@ -56,7 +68,7 @@ test('voided entries never count; defaulted values are reported, not penalised',
   for (const id of ['baby-30', 'baby-90']) p.obs.find(o => o.id === id).voided = { at: at(100), by: 'TE', reason: 'typo' };
   for (const o of p.obs.filter(x => x.type === 'supportive')) o.defaulted = ['companion'];
   const a = auditCase(p, PROTOCOLS.lcg, NOW);
-  assert.deepEqual([a.sections.baby.met, a.sections.baby.windows], [5, 7]);
+  assert.deepEqual([a.sections.baby.met, a.sections.baby.windows], [6, 8]);
   assert.equal(a.voided, 2);
   assert.deepEqual(a.defaulted, { entries: 5, values: 5 });
   assert.equal(a.sections.supportive.rate, 1);
@@ -79,7 +91,7 @@ test('oxytocin records are audited hourly while the infusion runs', () => {
   const p = lcgCase({ extra: { meds: [{ id: 'ox', kind: 'oxytocin', time: at(0), action: 'start', by: 'TE' }] } });
   p.obs.push({ id: 'ox-60', type: 'oxytocin', time: at(60), v: { dropsMin: 20 }, by: 'TE', flags: [] });
   const a = auditCase(p, PROTOCOLS.lcg, NOW);
-  assert.deepEqual([a.sections.medication.met, a.sections.medication.windows], [2, 3]);
+  assert.deepEqual([a.sections.medication.met, a.sections.medication.windows], [2, 4]);
 });
 
 test('header items: labour onset not recorded costs a third of the header score', () => {

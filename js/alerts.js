@@ -26,7 +26,7 @@
 import {
   LIMITS, getProtocol, parityKey, byParity, PARITY_LABEL, exams, timeReachedCurrentDilatation,
   lineStatus, monitoringStage, isLabouring, hoursBetween, minutesBetween, fmtMin, toMs, byTime,
-  activeObs, secondStageClockStart, pushingStart, birthTime,
+  activeObs, secondStageClockStart, secondStagePushing, birthTime,
 } from './protocol.js';
 import { uid } from './db.js';
 
@@ -249,18 +249,25 @@ export function pphTrigger(p, at) {
   return null;
 }
 
+// 'pulse 125' -> 'pulse', 'shock index 1.2' -> 'shock'
+const signKinds = signs => signs.map(s => s.split(' ')[0]);
+
 function pphDrafts(p, at) {
   const t = pphTrigger(p, at);
   if (!t) return [];
   // Blood loss only ever grows, so once a PPH episode has been closed a new
-  // one opens only when more bleeding is measured than at that closure.
+  // one opens only on new evidence: more bleeding measured than at that
+  // closure, or an abnormal sign that was absent at closure.
   const closed = (p.alerts || []).filter(a => a.code === 'pph' && a.resolved && a.meta);
   const lastClosed = closed[closed.length - 1];
-  if (lastClosed && t.totalMl <= lastClosed.meta.totalMl) return [];
+  if (lastClosed) {
+    const newSign = signKinds(t.signs).some(k => !(lastClosed.meta.signs || []).includes(k));
+    if (t.totalMl <= lastClosed.meta.totalMl && !newSign) return [];
+  }
   const title = t.level === 'volume'
-    ? `PPH: blood loss ${t.totalMl} mL`
+    ? `PPH: blood loss ${t.totalMl} mL${t.signs.length ? ' with ' + t.signs.join(', ') : ''}`
     : `PPH: ${t.totalMl} mL with ${t.signs.join(', ')}`;
-  return [{ ...A('pph', 'danger', title, PPH_ACTIONS), meta: { totalMl: t.totalMl, level: t.level } }];
+  return [{ ...A('pph', 'danger', title, PPH_ACTIONS), meta: { totalMl: t.totalMl, level: t.level, signs: signKinds(t.signs) } }];
 }
 
 // --------------------------------------------------- observation rules ----
@@ -521,7 +528,7 @@ export function evaluateTime(patient, settings, now = new Date()) {
   }
 
   if (stage === 'second' && patient.secondStageStart) {
-    const pushing = pushingStart(patient, patient.secondStageStart);
+    const pushing = secondStagePushing(patient);
     const clock = secondStageClockStart(patient, proto);
     const since = proto.secondStageClock === 'pushing' && pushing ? 'since pushing began' : 'since full dilatation';
     const mins = minutesBetween(clock, now);
@@ -610,7 +617,8 @@ export function addAlerts(patient, drafts, source = 'obs', opts = {}) {
       if (!open.lastSeen || toMs(at) > toMs(open.lastSeen)) open.lastSeen = at;
       if (source !== 'time') open.count = (open.count || 1) + 1; // a time rule re-fires every tick
       if (obsId) open.obsIds = [...new Set([...linkedObs(open), obsId])];
-      if (d.meta) open.meta = d.meta;
+      // an aggregate finding (PPH) shows its latest total, not the first one
+      if (d.meta) Object.assign(open, { meta: d.meta, title: d.title });
       if (RANK[d.severity] > RANK[open.severity]) {
         Object.assign(open, { severity: d.severity, title: d.title, advice: d.advice, ack: false, escalatedAt: raisedAt });
         added.push(open);
@@ -768,9 +776,13 @@ export function resolveAlert(p, alertId, { by = null, reason = '', at } = {}) {
 }
 
 /**
- * An entry was voided: detach it from the alerts it raised (an alert that no
- * other entry supports resolves) and re-open alerts it had resolved as
- * evidence - a mistyped normal value must not keep a real finding closed.
+ * An entry was voided (the caller has already marked it). Detach it from the
+ * alerts it raised, and re-open alerts it had resolved as evidence - a
+ * mistyped normal value must not keep a real finding closed. Only an alert
+ * raised by entries can rest on them: an entry alert resolves when no entry
+ * supports it any more; PPH, an aggregate trigger, resolves only if the
+ * remaining readings no longer meet it. Birth, admission, time and manual
+ * alerts never resolve because an entry was voided.
  */
 export function unlinkObservation(p, obsId, at, by = null) {
   const resolved = [], reopened = [];
@@ -778,11 +790,31 @@ export function unlinkObservation(p, obsId, at, by = null) {
     const ids = linkedObs(a);
     if (ids.includes(obsId)) {
       a.obsIds = ids.filter(id => id !== obsId);
-      if (!a.resolved && !a.obsIds.length) resolved.push(markResolved(a, at, 'void', by));
+      if (!a.resolved && a.source === 'obs') {
+        const stillMet = a.code === 'pph' ? !!pphTrigger(p) : a.obsIds.length > 0;
+        if (!stillMet) resolved.push(markResolved(a, at, 'void', by));
+      }
     }
     if (a.resolved && a.resolvedByObs === obsId) reopened.push(reopen(a));
   }
   return { resolved, reopened };
+}
+
+/**
+ * Findings about the labour itself - the baby in utero, progress, supportive
+ * care - close at birth. Maternal findings (pulse, BP, temperature, urine)
+ * stay open into the postpartum watch.
+ */
+export const LABOUR_ONLY = [
+  'fhr_abn', 'fhr_severe', 'decel', 'liquor_mec', 'liquor_thick_mec', 'liquor_blood',
+  'tachysystole', 'weak_contractions', 'contraction_long', 'contraction_short',
+  'moulding2', 'moulding3', 'moulding_caput', 'caput3', 'malposition', 'malpresentation',
+  'lcg_progress', 'alert_line', 'action_line', 'no_companion', 'no_pain_relief', 'no_fluids', 'supine', 'oxy_rate',
+];
+
+/** Re-open alerts matching a test (a voided birth record re-opens what the birth closed). */
+export function reopenWhere(p, test) {
+  return (p.alerts || []).filter(a => a.resolved && test(a)).map(reopen);
 }
 
 // ------------------------------------------------------------------------

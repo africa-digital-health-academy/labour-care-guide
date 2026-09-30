@@ -44,6 +44,9 @@ export function patientById(id) {
 }
 
 export async function savePatient(p) {
+  // Second guard behind record.createCase(): every case reaching the store is
+  // current, so an unstamped one is new and must never be re-migrated.
+  if (p.schemaVersion == null) p.schemaVersion = CASE_SCHEMA;
   await db.putPatient(p);
   const i = S.patients.findIndex(x => x.id === p.id);
   if (i >= 0) S.patients[i] = p; else S.patients.unshift(p);
