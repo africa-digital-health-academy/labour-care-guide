@@ -168,7 +168,8 @@ function birthForm(p) {
     h('div', { class: 'card' },
       h('h2', null, '👶 Birth'),
       h('div', { class: 'grid2' },
-        field('Time of birth', h('input', { type: 'datetime-local', value: m.time, oninput: e => { m.time = e.target.value; } })),
+        field('Time of birth - change it if the baby was born before you opened this form',
+          h('input', { type: 'datetime-local', value: m.time, oninput: e => { m.time = e.target.value; } })),
         field('Mode of birth *', segmented(modes, m.mode, v => { m.mode = v; })),
       ),
       field('Outcome', segmented([

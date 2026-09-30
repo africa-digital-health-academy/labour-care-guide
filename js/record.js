@@ -155,6 +155,8 @@ export function voidObservation(p, obsId, settings, { by = null, reason = '', at
   const when = at || nowISO();
   const before = stageSnapshot(p);
   o.voided = { at: when, by, reason: why };
+  // a voided admission value no longer describes the admission (card, risk alert)
+  if (o.source === 'admission') mirrorAdmission(p, o.type, {});
   const { resolved, reopened } = unlinkObservation(p, obsId, when, by);
   deriveRom(p);
   deriveStage(p, getProtocol(settings, p));

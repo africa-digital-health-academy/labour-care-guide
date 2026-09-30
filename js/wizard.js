@@ -404,7 +404,8 @@ function showTimeScreen(w) {
     h('p', { class: 'wizard-q' }, 'When were these observations made?'),
     segmented(choices, w.offsetMin, v => { w.offsetMin = v; }, { big: true }),
     choices.length < TIME_CHOICES.length ? h('p', { class: 'muted' },
-      `Earlier times are not offered: they are before the recorded birth time (${fmtTime(birth)}).`) : null,
+      `Earlier times are not offered: they are before the recorded birth time (${fmtTime(birth)}). `
+      + 'If the birth time is wrong, use "Correct birth record" on the Delivery tab.') : null,
     byField(w.by, v => { w.by = v; err.textContent = ''; }),
     err,
     h('div', { class: 'wizard-nav' },

@@ -322,3 +322,16 @@ test('S4: a contraction count of 0 is kept; an unexamined descent or presentatio
   assert.deepEqual(e.exam, { dilatation: 4, liquor: 'I' }, 'no descent, no presentation');
   assert.equal(admissionEntries({ fhr: 140, dilatation: 4, descent: 0 }).exam.descent, 0, 'descent 0/5 is a finding');
 });
+
+test('voiding an admission entry clears what it said on the admission record; other voids leave it alone', () => {
+  const p = latent();
+  p.admission = { time: iso(4), dilatation: 6, presentation: 'breech', fhr: 140 };
+  const exam = applyObservations(p, iso(4), { exam: { dilatation: 6, presentation: 'breech' } }, LCG, { source: 'admission' }).obs[0];
+  const later = applyObservations(p, iso(2), { baby: { fhr: 150 } }, LCG).obs[0];
+  voidObservation(p, later.id, LCG, { reason: 'duplicate' });
+  assert.equal(p.admission.fhr, 140, 'a routine entry is not the admission');
+  voidObservation(p, exam.id, LCG, { reason: 'examined the wrong woman' });
+  assert.equal(p.admission.dilatation, null);
+  assert.equal(p.admission.presentation, null);
+  assert.equal(p.admission.fhr, 140, 'only the voided entry type is cleared');
+});
