@@ -62,6 +62,65 @@ export function confirmDialog(message, { okLabel = 'OK', danger = false } = {}) 
   });
 }
 
+/**
+ * Per-entry initials (F3): "Recording as TE - change", or an input when no
+ * initials are set yet. onChange receives the upper-cased initials.
+ */
+export function byField(initials, onChange) {
+  let value = String(initials || '').trim().toUpperCase();
+  const wrap = h('div', { class: 'by-field' });
+  const paint = editing => {
+    clear(wrap);
+    if (editing || !value) {
+      wrap.append(h('label', { class: 'field' },
+        h('span', null, 'Your initials (recorded with this entry) *'),
+        h('input', {
+          type: 'text', value, maxlength: '6', autocapitalize: 'characters', placeholder: 'e.g. TE',
+          oninput: e => { value = e.target.value.trim().toUpperCase(); onChange(value); },
+        })));
+    } else {
+      wrap.append(
+        h('span', { class: 'chip' }, 'Recording as ' + value),
+        h('button', { type: 'button', class: 'btn ghost', onclick: () => paint(true) }, 'change'),
+      );
+    }
+  };
+  paint(false);
+  onChange(value);
+  return wrap;
+}
+
+/**
+ * A confirmation that records who and, when asked, why (void, correct,
+ * resolve, departure). Resolves {by, reason}, or null when cancelled.
+ */
+export function promptDialog({ title = '', message = '', lines = [], needReason = false, by = '', okLabel = 'OK', danger = false } = {}) {
+  return new Promise(resolve => {
+    let initials = by, reason = '';
+    const err = h('p', { class: 'muted', style: 'color:var(--c-danger);min-height:1.2em' }, '');
+    const close = openModal(h('div', null,
+      title ? h('h2', null, title) : null,
+      message ? h('p', { style: 'font-size:1.05rem' }, message) : null,
+      lines.length ? h('ul', { class: 'advice' }, lines.map(l => h('li', null, l))) : null,
+      needReason ? h('label', { class: 'field' }, h('span', null, 'Reason *'),
+        h('textarea', { oninput: e => { reason = e.target.value; } })) : null,
+      byField(initials, v => { initials = v; }),
+      err,
+      h('div', { class: 'wizard-nav' },
+        h('button', { class: 'btn secondary', onclick: () => { close(); resolve(null); } }, 'Cancel'),
+        h('button', {
+          class: 'btn' + (danger ? ' danger' : ''), onclick: () => {
+            if (needReason && !reason.trim()) { err.textContent = 'A reason is required.'; return; }
+            if (!initials) { err.textContent = 'Your initials are required.'; return; }
+            close();
+            resolve({ by: initials, reason: reason.trim() });
+          },
+        }, okLabel),
+      ),
+    ), { locked: true });
+  });
+}
+
 // ---------------------------------------------------------------- toast ----
 
 export function toast(msg, kind = '') {

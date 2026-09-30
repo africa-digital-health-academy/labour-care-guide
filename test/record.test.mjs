@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyObservations, voidObservation, previewVoid, correctObservation, recordEvent, applyBirth, voidDelivery,
-  createCase, applyReferral,
+  createCase, applyReferral, admissionEntries,
 } from '../js/record.js';
 import { addAlerts } from '../js/alerts.js';
 import {
@@ -210,4 +210,25 @@ test('at birth the labour findings close and the maternal ones stay; voiding the
   const v = voidDelivery(p, LCG, { reason: 'recorded on the wrong woman' });
   assert.equal(fhr.resolved, false);
   assert.ok(v.reopened.includes(fhr));
+});
+
+// ------------------------------------------------------------- M3 (S4) ----
+
+test('S4: admission records only what was examined or asked', () => {
+  const e = admissionEntries({ fhr: 140, dilatation: 6, presentation: 'cephalic', membranes: 'ruptured', temp: 37.9 });
+  assert.deepEqual(e.baby, { fhr: 140 }, 'no invented decelerations or fluid on the FHR entry');
+  assert.deepEqual(e.vitals, { temp: 37.9 }, 'a temperature without a BP is kept');
+  assert.deepEqual(e.exam, { dilatation: 6, presentation: 'cephalic' }, 'ruptured with no colour chosen records no fluid');
+  assert.equal(e.supportive, undefined, 'no companion answer, no supportive entry');
+  assert.equal(e.contractions, undefined);
+  assert.equal(e.pulse, undefined);
+});
+
+test('S4: intact membranes, a chosen fluid colour and a companion answer are recorded as given', () => {
+  assert.equal(admissionEntries({ fhr: 140, dilatation: 4, membranes: 'intact' }).exam.liquor, 'I');
+  assert.equal(admissionEntries({ fhr: 140, dilatation: 4, membranes: 'ruptured', liquor: 'M2' }).exam.liquor, 'M2');
+  const e = admissionEntries({ fhr: 140, dilatation: 4, membranes: 'intact', companion: 'D', sys: 120, dia: 80, pulse: 88 });
+  assert.deepEqual(e.supportive, { companion: 'D' }, 'companion only - pain relief, fluid and posture are not assumed');
+  assert.deepEqual(e.vitals, { sys: 120, dia: 80 });
+  assert.deepEqual(e.pulse, { pulse: 88 });
 });
