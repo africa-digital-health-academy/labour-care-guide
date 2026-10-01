@@ -68,8 +68,8 @@ facility use before the clinical panel review.
 - Clinical-safety review, automated and independent of the build (not a clinician), against the WHO form, manual and
   implementation resource package, two passes: every alert value, recording
   interval and stage limit matches, and every deviation is stricter or
-  added, never looser. Pass 1: safe to publish as a public preview after one
-  fix; pass 2: safe to deploy as the v2.0.0 public preview, not for facility
+  added, never looser. Pass 1 verdict: fit to publish as a public preview after one
+  fix; pass 2: fit to deploy as the v2.0.0 public preview, not for facility
   use. Every item of both passes was fixed with tests; the last four fixes,
   after pass 2, were not reviewed again. Two browser walks of the full demo
   case and the M6 changes, offline, at phone width and in Amharic.

@@ -100,7 +100,7 @@ Systematic review of partograph practice (Ollerhead and Osrin, BMC Pregnancy Chi
 
 ## 5. Ethiopia specifics
 
-**Compliance.** Pooled partograph utilisation was **59.95%** (19 studies; Hailu 2020), falling to **54.92%** in the 2025 update; the range runs from 6.9% (Oromia) to 92.6% (Dire Dawa). Only **21.5%** of charts in the 2016 national EmONC census met the WHO completeness standard; the worst-documented items were **moulding 50.1%, temperature 53% and descent 63.2%** (the wizard makes these one tap each). Strongest enablers: refresher training OR 5.7, form availability OR 3.9, the midwife profession OR 3.1-4.0, **the health-centre setting OR 3.5**, supervision OR 3.2. Night shifts degrade documentation about 3.5-fold.
+**Compliance.** Pooled partograph utilisation was **59.95%** (19 studies; Ayenew and Zewdu 2020), falling to **54.92%** in the 2025 meta-analysis of 23 studies (Ayele et al. 2025); the range runs from 6.9% (Oromia) to 92.6% (Dire Dawa). Only **21.5%** of charts in the 2016 national EmONC census met the WHO completeness standard; the worst-documented items were **moulding 50.1%, temperature 53% and descent 63.2%** (the wizard makes these one tap each). Strongest enablers: refresher training OR 5.7, form availability OR 3.9, the midwife profession OR 3.1-4.0, **the health-centre setting OR 3.5**, supervision OR 3.2. Night shifts degrade documentation about 3.5-fold.
 
 **Policy.** MoH-led implementation of the WHO LCG is under way; corroboration: Ethiopia is a pilot country of the 2025 implementation package (section 2). The MOH **Obstetrics Management Protocol for Health Centers (May 2021)**, with the modified WHO partograph (active phase at 4 cm, alert and action lines, a latent-phase chart, admission of low-risk women at 4 cm or more), is the standard some facilities are still audited on, hence the legacy protocol. A **National Intrapartum Care Guideline** was launched on 27 June 2024 (MoH with ESOG); its text could not be obtained, so any national adaptation of the LCG is unknown, hence the national adaptation slot on the roadmap. No Ethiopian LCG study was found in the June 2026 search.
 
@@ -109,8 +109,8 @@ Systematic review of partograph practice (Ollerhead and Osrin, BMC Pregnancy Chi
 **Digital landscape.** The Digital Health Blueprint 2021-2030 calls for offline-capable point-of-service tools, referral coordination systems, and the **HL7 FHIR, LOINC, SNOMED and ICD-11** standards. DHIS2 is the national HMIS (more than 30,000 facilities); eCHIS (CommCare-based, about 25,000 health extension workers) proves national-scale offline Android workflows; EMRs (SmartCare legacy, moving toward Bahmni and OpenMRS) exist only in about 70 high-caseload facilities, so **health centres have no EMR today**. Power: only 23% of facilities had less than 2 h/day of interruption (SARA 2016). Languages: five federal working languages; clinical training in English.
 
 Key sources:
-- https://pmc.ncbi.nlm.nih.gov/articles/PMC7640697/ (Hailu 2020 meta-analysis)
-- https://pmc.ncbi.nlm.nih.gov/articles/PMC11808142/ (2025 update)
+- https://pmc.ncbi.nlm.nih.gov/articles/PMC7640697/ (Ayenew and Zewdu 2020, Systematic Reviews, meta-analysis of 19 studies)
+- https://pmc.ncbi.nlm.nih.gov/articles/PMC11808142/ (Ayele et al. 2025, Frontiers in Global Women's Health, 23 studies)
 - https://pmc.ncbi.nlm.nih.gov/articles/PMC7585173/ (2016 EmONC chart audit)
 - https://pmc.ncbi.nlm.nih.gov/articles/PMC9409580/ (referral pathways)
 - https://pmc.ncbi.nlm.nih.gov/articles/PMC11320596/ (pre-referral MgSO4)
