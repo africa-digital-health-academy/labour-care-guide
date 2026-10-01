@@ -1,5 +1,90 @@
 # Changelog
 
+## 2.0.0-dev (unreleased) - milestone M5, 1 October 2026
+
+FHIR export to the plan, every screen in draft Amharic, the M4 review
+follow-ups, and the documentation for v2.
+
+- FHIR export (plan 6.6): every resource has a fresh UUID and every reference
+  resolves inside the bundle; the midwife's initials become the performer;
+  voided entries and medicines are exported as entered-in-error with the
+  reason; every Observation has a category. Now exported as well: amniotic
+  fluid, decelerations, supportive care and posture, the pushing mark, blood
+  loss, the postpartum checks, the birth (mode, outcome, stillbirth timing)
+  and the Robson group. The encounter stays in progress through labour, the
+  24-hour postpartum watch and a referral not yet departed, and is finished
+  after the closure, her departure or the end of the watch; the newborn's
+  birth date is the East Africa Time date, and every newborn finding is
+  exported on the newborn, also when the birth record was voided, without
+  the mother's encounter. The baby is no longer linked to the mother as the
+  same person, which invited a record merge; the mother is recorded as the
+  baby's related person. Contraction duration carried the code for
+  intensity; corrected. Codes were checked on public terminology servers with
+  code-only queries and a synthetic bundle (no case data); eight items are
+  listed for terminology or integration review in docs/FHIR_MAPPING.md.
+- Amharic: every screen goes through the translation layer and 880 of the
+  881 keys have an Amharic draft, not yet reviewed; the oxytocin scope
+  instruction stays English. Alert titles and advice, drug doses and the
+  chart stay in English until the clinical panel validates a translation,
+  and every stored or shared record (referral note, reasons, checklist,
+  acknowledgement notes) stays in English. The Amharic Cancel button no
+  longer uses the word for "delete" next to a void. A "draft" marker in the
+  top bar and a note in Settings say so. Ethiopian dates in Amharic use the
+  Amharic era abbreviation. A completeness test fails on any missing key or
+  on an Amharic draft whose placeholders differ from the English.
+- Placeholders are filled in one pass: a "$&" typed in a reason or a name is
+  no longer rewritten.
+- An alert asked again after an acknowledgement, or a new episode of an alert
+  acknowledged before, shows its repeat or episode number and the last
+  acknowledgement. The dialog has no default action any more: it starts on
+  the earlier action only when every alert in it is a repeat that shared that
+  action; otherwise the midwife must tap one. Later episodes and closed
+  alerts are labelled, and a void that opens alerts opens the dialog.
+  Acknowledgement notes no longer count as shared decisions in the audit.
+- Every entry is judged as the case stood at its own time, when it is
+  recorded and again whenever a back-timed exam, a void or a correction moves
+  a stage start: a contraction finding that now falls in the latent phase
+  closes its alert ("restaged"), and one that now falls in active labour
+  raises its alert. An exam added, voided or corrected re-judges the exams
+  after it, so a forgotten earlier exam raises the progress alert it implies.
+  A void or a correction runs the time rules in the same save, and its
+  confirmation lists every alert that will open or close, a time limit
+  labelled as such. A labour entry corrected after the birth or her departure
+  never opens a labour alert on a woman no longer in labour.
+- The companion indicator shows the first and the second stage apart; the
+  second counts women with a documented second stage and reports how many
+  who wanted a companion were left out.
+- The referral note and its shared text write risk factors, transport, what
+  was given and the medication in words, not codes, with the oxytocin rate,
+  and leave out a voided medicine. The MgSO4 loading dose has one source in
+  the engine, shared by the severe-BP alert, the eclampsia card and the
+  pre-referral checklist, now with the 50% IM strength (panel to confirm).
+- Chart and print write acknowledgement actions and risk factors in words;
+  on the Ethiopian partograph a contraction bar is red only where an alert
+  was raised (none in the latent phase).
+- Settings are protected like the other forms: the 30-second heartbeat no
+  longer drops unsaved settings, and the protocol description follows the
+  choice before saving. The page language follows the screen language, and
+  the Amharic draft marker sits beside the clock so the title keeps its room
+  at phone width.
+- The Ethiopian partograph moved out of the chart module into
+  js/partograph.js (chart.js from 1,236 to 800 lines; output byte-identical on
+  113 test fixtures).
+- Contrast: the due chip and the amber button now meet WCAG AA.
+- About: links to the WHO LCG implementation resource package (2025) and the
+  Jhpiego / MOMENTUM LCG learning resource package.
+- Documentation: DESIGN (render model, correction model, alert lifecycle,
+  audit and indicators, release process), RESEARCH (implementation package,
+  PPH guidelines 2025), ROADMAP (v2.1) and the README for the new name.
+- Independent clinical review, two passes, and two browser walks. Pass 1
+  found no critical issue and four to fix before facility use, all fixed:
+  progress alerts that depend on earlier exams were not re-judged; a
+  back-timed entry was judged against the current stage; one preselected
+  action could be written to a mixed batch of alerts; a newborn check could
+  be exported with the mother as subject. Pass 2 verified them and found one
+  more, fixed: a correction after the birth could open a labour alert.
+- Tests: 445, up from 345.
+
 ## 2.0.0-dev (unreleased) - milestone M4, 1 October 2026
 
 The chart reads like the WHO Labour Care Guide sheet, prints, and the

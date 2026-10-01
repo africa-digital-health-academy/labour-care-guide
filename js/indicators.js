@@ -14,7 +14,7 @@
 import { LIMITS, getProtocol, activeObs, toMs, byTime } from './protocol.js';
 import { auditCase } from './audit.js';
 import { bloodLossTotal } from './alerts.js';
-import { toEthiopic, EC_MONTHS, EC_MONTHS_AM } from './ethiopic.js';
+import { toEthiopic, EC_MONTHS, EC_MONTHS_AM, ecEra } from './ethiopic.js';
 import { APP_TZ_OFFSET } from './ui.js';
 
 export const MONITORED_MIN_ENTRIES = 4; // v1 reporting definition of a monitored labour
@@ -87,6 +87,19 @@ export function hadCompanion(p, stage) {
   const split = p.secondStageStart ? toMs(p.secondStageStart) : Infinity;
   return companionRecords(p).some(r => r.value === 'Y'
     && (!stage || (stage === 'first' ? toMs(r.time) < split : toMs(r.time) >= split)));
+}
+
+/**
+ * Her second stage is on the record (full dilatation documented). A woman
+ * delivered by caesarean in the first stage never had one, and without the
+ * start of the second stage no companion record can be placed in it, so
+ * only these women make the denominator of the second-stage figure: it reads
+ * "women with a documented second stage". A vaginal birth that came before
+ * any 10 cm exam is left out too; the figure reports how many women who
+ * wanted a companion were left out (withoutDocumentedSecond).
+ */
+function reachedSecondStage(p) {
+  return !!p.secondStageStart;
 }
 
 // --------------------------------------------------------------- Robson ----
@@ -169,7 +182,8 @@ export function computeIndicators(cases, { from = null, to = null, settings = {}
 
   const lcgDone = births.filter(p => auditCase(p, getProtocol(settings, p), now).completed).length;
 
-  let wanted = 0, had = 0, unknown = 0, hadFirst = 0, hadSecond = 0;
+  // byStage.second counts only the women who reached a second stage (reachedSecondStage)
+  let wanted = 0, had = 0, unknown = 0, hadFirst = 0, wantedSecond = 0, hadSecond = 0;
   for (const p of births) {
     const w = companionWanted(p);
     if (w === null) { unknown++; continue; }
@@ -177,6 +191,8 @@ export function computeIndicators(cases, { from = null, to = null, settings = {}
     wanted++;
     if (hadCompanion(p)) had++;
     if (hadCompanion(p, 'first')) hadFirst++;
+    if (!reachedSecondStage(p)) continue;
+    wantedSecond++;
     if (hadCompanion(p, 'second')) hadSecond++;
   }
 
@@ -207,7 +223,13 @@ export function computeIndicators(cases, { from = null, to = null, settings = {}
     lcgUse: ratio(lcgDone, D),
     fhrOnAdmission: ratio(births.filter(fhrOnAdmission).length, D),
     bpOnAdmission: ratio(births.filter(bpOnAdmission).length, D),
-    companion: { ...ratio(had, wanted), unknown, byStage: { first: ratio(hadFirst, wanted), second: ratio(hadSecond, wanted) } },
+    companion: {
+      ...ratio(had, wanted), unknown,
+      byStage: {
+        first: ratio(hadFirst, wanted),
+        second: { ...ratio(hadSecond, wantedSecond), withoutDocumentedSecond: wanted - wantedSecond },
+      },
+    },
     caesarean: { ...ratio(births.filter(p => p.delivery.mode === 'cs').length, D), robson },
     stillbirths: { ...ratio(sb.length, counted.length), ...split },
   };
@@ -266,6 +288,10 @@ export function indicatorRows(ind) {
   rows.push(['BP measured on admission', ind.bpOnAdmission.n, ind.bpOnAdmission.d, pct(ind.bpOnAdmission), src]);
   rows.push(['Wanted and had a companion of choice', ind.companion.n, ind.companion.d, pct(ind.companion),
     `wish not recorded for ${ind.companion.unknown}`]);
+  const st = ind.companion.byStage;
+  rows.push(['Companion of choice in the first stage', st.first.n, st.first.d, pct(st.first), 'women who wanted a companion']);
+  rows.push(['Companion of choice in the second stage', st.second.n, st.second.d, pct(st.second),
+    `women with a documented second stage; ${st.second.withoutDocumentedSecond} who wanted one had none documented`]);
   rows.push(['Caesarean section rate', ind.caesarean.n, ind.caesarean.d, pct(ind.caesarean), src]);
   for (const g of Object.keys(ind.caesarean.robson).sort((a, b) => (parseInt(a, 10) || 99) - (parseInt(b, 10) || 99) || a.localeCompare(b))) {
     const r = ind.caesarean.robson[g];
@@ -366,13 +392,13 @@ export function monthLabel(year, month) {
  * The Ethiopian calendar days a Gregorian month covers, e.g. June 2026 ->
  * 'Ginbot 24 - Sene 23, 2018 EC'. A Gregorian month always spans two
  * Ethiopian months (three in September, with Pagume, and two EC years), so
- * both ends are named. lang 'am' gives the Amharic month names.
+ * both ends are named. lang 'am' gives the Amharic month names and era.
  */
 export function ecMonthSpan(year, month, lang = 'en') {
   const names = lang === 'am' ? EC_MONTHS_AM : EC_MONTHS;
   const a = toEthiopic(new Date(year, month - 1, 1));
   const b = toEthiopic(new Date(year, month, 0)); // day 0 of the next month = the last day of this one
-  const end = `${names[b.month - 1]} ${b.day}, ${b.year} EC`;
+  const end = `${names[b.month - 1]} ${b.day}, ${b.year} ${ecEra(lang)}`;
   return a.year === b.year
     ? `${names[a.month - 1]} ${a.day} - ${end}`
     : `${names[a.month - 1]} ${a.day}, ${a.year} - ${end}`;

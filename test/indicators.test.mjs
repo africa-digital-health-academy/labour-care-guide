@@ -11,7 +11,7 @@ import {
 } from '../js/indicators.js';
 import { auditCase } from '../js/audit.js';
 import { getProtocol } from '../js/protocol.js';
-import { EC_MONTHS_AM } from '../js/ethiopic.js';
+import { EC_MONTHS_AM, EC_ERA } from '../js/ethiopic.js';
 import { NOW, iso, mkPatient, LCG } from './helpers.mjs';
 
 // ------------------------------------------------------------- Robson ----
@@ -115,6 +115,26 @@ test('HMIS counts: births by birth date, admissions by admission date, demo excl
   assert.equal(all.births, 4);
 });
 
+test('M5: second-stage companion figure: the denominator is the women who wanted one AND reached the second stage', () => {
+  const sup = (p, hAgo, companion) => p.obs.push({ id: `${p.id}-${hAgo}`, type: 'supportive', time: iso(hAgo), v: { companion }, by: 'TE', flags: [] });
+  const both = birthCase('S1', { secondStageStart: iso(2) });       // a companion in both stages
+  sup(both, 6, 'Y'); sup(both, 1.5, 'Y');
+  const firstOnly = birthCase('S2', { secondStageStart: iso(2) });  // none in the second stage
+  sup(firstOnly, 6, 'Y'); sup(firstOnly, 1.5, 'N');
+  // caesarean in the first stage: wanted and had a companion, never had a second stage
+  const csFirst = birthCase('S3', { delivery: { time: iso(1), mode: 'cs', outcome: 'live' } });
+  sup(csFirst, 6, 'Y');
+  const c = computeIndicators([both, firstOnly, csFirst], { ...JUNE, settings: LCG, now: NOW }).companion;
+  assert.deepEqual([c.n, c.d], [3, 3], 'all three wanted and had a companion');
+  assert.deepEqual([c.byStage.first.n, c.byStage.first.d], [3, 3]);
+  assert.deepEqual([c.byStage.second.n, c.byStage.second.d], [1, 2], 'the first-stage caesarean is in neither part of the figure');
+  assert.equal(c.byStage.second.rate, 0.5);
+  assert.equal(c.byStage.second.withoutDocumentedSecond, 1, 'the woman left out of the second-stage figure is counted');
+  const none = computeIndicators([csFirst], { ...JUNE, settings: LCG, now: NOW }).companion.byStage.second;
+  assert.deepEqual([none.n, none.d, none.rate], [0, 0, null], 'nobody reached a second stage: no rate, never 0 %');
+  assert.equal(none.withoutDocumentedSecond, 1);
+});
+
 test('companion wish: the explicit answer wins; Y = wanted, D = declined, N alone = unknown', () => {
   assert.equal(companionWanted(mkPatient({ companionWanted: false, admission: { time: iso(6), companion: 'Y' } })), false);
   assert.equal(companionWanted(mkPatient({ admission: { time: iso(6), companion: 'Y' } })), true);
@@ -159,6 +179,9 @@ test('indicator rows carry a header, the Robson breakdown and the stillbirth spl
   assert.deepEqual(rows[0], ['indicator', 'numerator', 'denominator', 'percent', 'note']);
   assert.ok(rows.some(r => r[0] === 'Caesarean rate, Robson group 3' && r[1] === 1 && r[2] === 1));
   assert.ok(rows.some(r => r[0] === 'Institutional stillbirths' && /intrapartum 1/.test(r[4])));
+  const second = rows.find(r => r[0] === 'Companion of choice in the second stage');
+  assert.ok(second && /documented second stage; \d+ who wanted one had none documented/.test(second[4]));
+  assert.ok(rows.some(r => r[0] === 'Companion of choice in the first stage'));
 });
 
 test('indicator export rows: the period and the facility in front of every row', () => {
@@ -230,7 +253,8 @@ test('the Ethiopian calendar span of a Gregorian month, also across the EC new y
   assert.equal(ecMonthSpan(2026, 6), 'Ginbot 24 - Sene 23, 2018 EC');
   assert.equal(ecMonthSpan(2026, 9), 'Nehase 26, 2018 - Meskerem 20, 2019 EC', 'Pagume falls inside September');
   assert.equal(ecMonthSpan(2026, 12), 'Hidar 22 - Tahsas 22, 2019 EC');
-  assert.equal(ecMonthSpan(2026, 6, 'am'), `${EC_MONTHS_AM[8]} 24 - ${EC_MONTHS_AM[9]} 23, 2018 EC`);
+  assert.equal(ecMonthSpan(2026, 6, 'am'), `${EC_MONTHS_AM[8]} 24 - ${EC_MONTHS_AM[9]} 23, 2018 ${EC_ERA.am}`);
+  assert.ok(!ecMonthSpan(2026, 6, 'am').includes('EC'), 'Amharic screens never show EC');
 });
 
 test('a birth at 01:30 EAT on 1 July counts in July, not in June', () => {

@@ -1,6 +1,8 @@
 // ui.js - tiny DOM toolkit (no framework: keeps the app dependency-free,
 // auditable, and runnable from any static file host).
 
+import { t } from './i18n.js';
+
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
   if (attrs) {
@@ -47,13 +49,13 @@ export function openModal(content, opts = {}) {
   return close;
 }
 
-export function confirmDialog(message, { okLabel = 'OK', danger = false } = {}) {
+export function confirmDialog(message, { okLabel = t('ok'), danger = false } = {}) {
   return new Promise(resolve => {
     const close = openModal(
       h('div', null,
         h('p', { style: 'font-size:1.1rem' }, message),
         h('div', { class: 'wizard-nav' },
-          h('button', { class: 'btn secondary', onclick: () => { close(); resolve(false); } }, 'Cancel'),
+          h('button', { class: 'btn secondary', onclick: () => { close(); resolve(false); } }, t('cancel')),
           h('button', { class: 'btn' + (danger ? ' danger' : ''), onclick: () => { close(); resolve(true); } }, okLabel),
         ),
       ),
@@ -73,15 +75,15 @@ export function byField(initials, onChange) {
     clear(wrap);
     if (editing || !value) {
       wrap.append(h('label', { class: 'field' },
-        h('span', null, 'Your initials (recorded with this entry) *'),
+        h('span', null, t('ui_initials_label')),
         h('input', {
-          type: 'text', value, maxlength: '6', autocapitalize: 'characters', placeholder: 'e.g. TE',
+          type: 'text', value, maxlength: '6', autocapitalize: 'characters', placeholder: t('ui_initials_eg'),
           oninput: e => { value = e.target.value.trim().toUpperCase(); onChange(value); },
         })));
     } else {
       wrap.append(
-        h('span', { class: 'chip' }, 'Recording as ' + value),
-        h('button', { type: 'button', class: 'btn ghost', onclick: () => paint(true) }, 'change'),
+        h('span', { class: 'chip' }, t('ui_recording_as', { by: value })),
+        h('button', { type: 'button', class: 'btn ghost', onclick: () => paint(true) }, t('ui_change')),
       );
     }
   };
@@ -94,7 +96,7 @@ export function byField(initials, onChange) {
  * A confirmation that records who and, when asked, why (void, correct,
  * resolve, departure). Resolves {by, reason}, or null when cancelled.
  */
-export function promptDialog({ title = '', message = '', lines = [], needReason = false, by = '', okLabel = 'OK', danger = false } = {}) {
+export function promptDialog({ title = '', message = '', lines = [], needReason = false, by = '', okLabel = t('ok'), danger = false } = {}) {
   return new Promise(resolve => {
     let initials = by, reason = '';
     const err = h('p', { class: 'muted', style: 'color:var(--c-danger);min-height:1.2em' }, '');
@@ -102,16 +104,16 @@ export function promptDialog({ title = '', message = '', lines = [], needReason 
       title ? h('h2', null, title) : null,
       message ? h('p', { style: 'font-size:1.05rem' }, message) : null,
       lines.length ? h('ul', { class: 'advice' }, lines.map(l => h('li', null, l))) : null,
-      needReason ? h('label', { class: 'field' }, h('span', null, 'Reason *'),
+      needReason ? h('label', { class: 'field' }, h('span', null, t('ui_reason')),
         h('textarea', { oninput: e => { reason = e.target.value; } })) : null,
       byField(initials, v => { initials = v; }),
       err,
       h('div', { class: 'wizard-nav' },
-        h('button', { class: 'btn secondary', onclick: () => { close(); resolve(null); } }, 'Cancel'),
+        h('button', { class: 'btn secondary', onclick: () => { close(); resolve(null); } }, t('cancel')),
         h('button', {
           class: 'btn' + (danger ? ' danger' : ''), onclick: () => {
-            if (needReason && !reason.trim()) { err.textContent = 'A reason is required.'; return; }
-            if (!initials) { err.textContent = 'Your initials are required.'; return; }
+            if (needReason && !reason.trim()) { err.textContent = t('ui_reason_required'); return; }
+            if (!initials) { err.textContent = t('ui_initials_required'); return; }
             close();
             resolve({ by: initials, reason: reason.trim() });
           },
@@ -208,16 +210,15 @@ export function fmtDT(iso) {
 
 export function timeAgo(iso, now = new Date()) {
   const min = Math.round((now - new Date(iso)) / 60000);
-  if (min < 1) return 'now';
-  if (min < 60) return `${min} min ago`;
-  const h = Math.floor(min / 60);
-  return `${h} h ${min % 60} min ago`;
+  if (min < 1) return t('ui_now');
+  if (min < 60) return t('ui_min_ago', { n: min });
+  return t('ui_h_min_ago', { h: Math.floor(min / 60), m: min % 60 });
 }
 
 export function durationSince(iso, now = new Date()) {
   const min = Math.max(0, Math.round((now - new Date(iso)) / 60000));
   const hf = Math.floor(min / 60);
-  return hf ? `${hf} h ${min % 60} min` : `${min} min`;
+  return hf ? t('ui_dur_hm', { h: hf, m: min % 60 }) : t('ui_dur_m', { m: min });
 }
 
 /** "X minutes ago" time picker value -> ISO string. */

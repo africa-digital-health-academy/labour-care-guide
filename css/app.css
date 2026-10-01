@@ -11,6 +11,7 @@
   --c-danger-bg: #fdecea;
   --c-warn: #b26a00;
   --c-warn-bg: #fff4e0;
+  --c-warn-text: #9a5b00;  /* warn text on --c-warn-bg: 4.98:1 (WCAG AA); --c-warn there is 3.89:1 */
   --c-ok: #2e7d32;
   --c-ok-bg: #e8f5e9;
   --c-ink: #1c2b28;
@@ -48,6 +49,12 @@ button { font-family: inherit; }
 .topbar h1 { font-size: 1.15rem; margin: 0; flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar .clock { font-variant-numeric: tabular-nums; opacity: .9; font-size: .95rem; text-align: right; line-height: 1.2; }
 .topbar .clock .ec { font-size: .75rem; opacity: .85; display: block; }
+/* Amharic draft marker beside the clock's time: costs the title no width (M5) */
+.topbar .draft-chip {
+  background: var(--c-warn-bg); color: var(--c-ink); border: 0; border-radius: 999px;
+  padding: 2px 8px; margin-left: 6px; min-height: 24px; vertical-align: middle;
+  font-weight: 700; font-size: .75rem; cursor: pointer;
+}
 .btn-back {
   background: rgba(255,255,255,.15); border: none; color: #fff;
   min-width: var(--tap); min-height: var(--tap); border-radius: 10px;
@@ -100,7 +107,7 @@ button { font-family: inherit; }
 .btn.secondary { background: #fff; color: var(--c-primary); }
 .btn.ghost { background: none; border-color: transparent; color: var(--c-primary); }
 .btn.danger { background: var(--c-danger); border-color: var(--c-danger); }
-.btn.warn { background: var(--c-warn); border-color: var(--c-warn); }
+.btn.warn { background: var(--c-warn-text); border-color: var(--c-warn-text); } /* white on #9a5b00: 5.4:1 (on --c-warn it was 4.24:1) */
 .btn.big { width: 100%; min-height: 58px; font-size: 1.1rem; }
 .btn[disabled] { opacity: .45; cursor: not-allowed; }
 
@@ -174,7 +181,7 @@ textarea { min-height: 80px; resize: vertical; }
   border-radius: 999px; padding: 5px 12px; font-size: .85rem; font-weight: 600;
   background: var(--c-primary-light); color: var(--c-primary-dark);
 }
-.chip.due { background: var(--c-warn-bg); color: var(--c-warn); }
+.chip.due { background: var(--c-warn-bg); color: var(--c-warn-text); }
 .chip.overdue { background: var(--c-danger-bg); color: var(--c-danger); animation: pulse 1.6s infinite; }
 .chip.ok { background: var(--c-ok-bg); color: var(--c-ok); }
 .chip.stage { background: #e8eefc; color: #2a4d9b; }

@@ -1,8 +1,15 @@
-// i18n.js — UI strings. English is complete; Amharic (አማርኛ) covers the main
-// midwife-facing labels and falls back to English elsewhere.
+// i18n.js - UI strings. English is complete; Amharic covers the screens and
+// falls back to English for any key without a draft.
 // NOTE: Amharic strings are draft translations and must be reviewed by an
-// Ethiopian clinical/localization team before facility use. Afaan Oromo,
-// Tigrinya, Somali and Afar are planned (see docs/ROADMAP.md).
+// Ethiopian clinical/localization team before facility use. Alert titles and
+// alert advice (clinical instructions, drug doses) stay in English until the
+// clinical panel validates a translation. Afaan Oromo, Tigrinya, Somali and
+// Afar are planned (see docs/ROADMAP.md).
+
+import * as wz from './i18n/wizard.js';
+import * as pt from './i18n/patient.js';
+import * as fm from './i18n/forms.js';
+import * as rp from './i18n/reports.js';
 
 const en = {
   app_name: 'Labour Care Guide',
@@ -65,6 +72,20 @@ const en = {
   event: 'Event',
   pushing: 'Pushing began',
   postpartum_watch: 'Postpartum watch',
+  // M5: shared dialogs and time helpers in ui.js.
+  ok: 'OK',
+  ui_initials_label: 'Your initials (recorded with this entry) *',
+  ui_initials_eg: 'e.g. TE',
+  ui_recording_as: 'Recording as {by}',
+  ui_change: 'change',
+  ui_reason: 'Reason *',
+  ui_reason_required: 'A reason is required.',
+  ui_initials_required: 'Your initials are required.',
+  ui_now: 'now',
+  ui_min_ago: '{n} min ago',
+  ui_h_min_ago: '{h} h {m} min ago',
+  ui_dur_m: '{m} min',
+  ui_dur_hm: '{h} h {m} min',
 };
 
 const am = {
@@ -98,7 +119,8 @@ const am = {
   delivery: 'ወሊድ',
   referral: 'ሪፈራል',
   save: 'አስቀምጥ',
-  cancel: 'ሰርዝ',
+  // not the word for "delete / strike out": beside a void it read as the void itself
+  cancel: 'ይቅር',
   next: 'ቀጣይ',
   back: 'ተመለስ',
   skip: 'ዝለል',
@@ -117,17 +139,63 @@ const am = {
   companion: 'አጃቢ አለ',
   alert_review: 'ክለሳ ያስፈልጋል',
   alert_act: 'አሁኑኑ እርምጃ ውሰድ',
+  in_min: 'በ{n} ደቂቃ ውስጥ',
+  ppMother: 'የእናት ምርመራ',
+  ppBaby: 'የሕፃን ምርመራ',
+  ppBP: 'ከወሊድ በኋላ የደም ግፊት',
+  ppVoid: 'ሽንት መሽናት',
+  bloodloss: 'የደም መፍሰስ',
+  event: 'ክስተት',
+  pushing: 'ማማጥ ጀመረች',
+  postpartum_watch: 'የድኅረ ወሊድ ክትትል',
+  ok: 'እሺ',
+  ui_initials_label: 'የስምዎ መነሻ ፊደላት (ከዚህ መዝገብ ጋር ይመዘገባሉ) *',
+  ui_initials_eg: 'ለምሳሌ TE',
+  ui_recording_as: 'መዝጋቢ፦ {by}',
+  ui_change: 'ቀይር',
+  ui_reason: 'ምክንያት *',
+  ui_reason_required: 'ምክንያት ያስፈልጋል።',
+  ui_initials_required: 'የስምዎ መነሻ ፊደላት ያስፈልጋሉ።',
+  ui_now: 'አሁን',
+  ui_min_ago: 'ከ{n} ደቂቃ በፊት',
+  ui_h_min_ago: 'ከ{h} ሰዓት {m} ደቂቃ በፊት',
+  ui_dur_m: '{m} ደቂቃ',
+  ui_dur_hm: '{h} ሰዓት {m} ደቂቃ',
 };
+
+// Per-area string fragments (M5), merged into the two dictionaries. Each area
+// prefixes its keys (wz. wizard, pt. patient and ward board, fm. admission /
+// birth / referral forms, rp. reports and settings) so areas never collide.
+for (const frag of [wz, pt, fm, rp]) {
+  Object.assign(en, frag.en);
+  Object.assign(am, frag.am);
+}
 
 const dicts = { en, am };
 let lang = 'en';
 
+/** Every English key (the completeness test checks each t() call against these). */
+export const EN_KEYS = Object.freeze(Object.keys(en));
+
+/** Share of English keys with an Amharic draft, 0-1 (reported by the tests). */
+export function amharicCoverage() {
+  const keys = Object.keys(en);
+  return keys.length ? keys.filter(k => am[k]).length / keys.length : 1;
+}
+
 export function setLang(l) { lang = dicts[l] ? l : 'en'; }
 export function getLang() { return lang; }
 
-/** Translate a key; {n}-style placeholders filled from vars. Falls back en → key. */
+/**
+ * Translate a key; {name} placeholders filled from vars in one pass. Falls
+ * back to English, then to the key. A replacer function (not a replacement
+ * string) keeps "$&", "$'" or "$$" inside free text such as a reason or a
+ * name from being rewritten, fills a placeholder used twice, and never
+ * re-expands a value that itself contains "{...}". Unknown placeholders stay
+ * visible so a missing variable is noticed.
+ */
 export function t(key, vars) {
-  let s = (dicts[lang] && dicts[lang][key]) || en[key] || key;
-  if (vars) for (const k of Object.keys(vars)) s = s.replace('{' + k + '}', vars[k]);
-  return s;
+  const s = (dicts[lang] && dicts[lang][key]) || en[key] || key;
+  if (!vars) return s;
+  return s.replace(/\{(\w+)\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m));
 }

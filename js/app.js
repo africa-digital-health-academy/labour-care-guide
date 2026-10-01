@@ -3,11 +3,12 @@
 // labouring woman and every mother in postpartum watch (the "who needs me
 // now" engine behind the ward board), render safety (S3: a data change never
 // wipes a form in progress), and the release plumbing: service-worker update
-// chip, audio unlock, wake lock.
+// chip, audio unlock, wake lock. Screen text goes through t() (keys 'rp.*' in
+// js/i18n/reports.js); alert titles stay English (see i18n/reports.js).
 
 import './version.js';
-import { h, clear, beep, toast, eatDate, APP_TZ, unlockAudio } from './ui.js';
-import { t } from './i18n.js';
+import { h, clear, beep, toast, openModal, eatDate, APP_TZ, unlockAudio } from './ui.js';
+import { t, getLang } from './i18n.js';
 import { S, initStore, bus, savePatient, patientById } from './store.js';
 import { getProtocol, dueList, isLabouring, inPostpartumWatch } from './protocol.js';
 import { refreshTimeAlerts } from './alerts.js';
@@ -17,7 +18,7 @@ import { renderDashboard } from './views/dashboard.js';
 import { renderAdmission } from './views/admission.js';
 import { renderPatient, patientHeader, alertStrip } from './views/patient.js';
 import { renderReports } from './views/reports.js';
-import { renderSettings } from './views/settings.js';
+import { renderSettings, amharicDraftNotice } from './views/settings.js';
 
 const app = document.getElementById('app');
 
@@ -80,7 +81,32 @@ function offerUpdate(reg) {
 }
 
 function updateChip() {
-  return h('button', { class: 'update-chip', title: 'A new version is ready. Tap to reload.', onclick: () => activateUpdate() }, 'Update ready');
+  return h('button', { class: 'update-chip', title: t('rp.update_ready_title'), onclick: () => activateUpdate() }, t('rp.update_ready'));
+}
+
+// -------------------------------------------------------- Amharic draft ----
+// While the UI is in Amharic, a small marker sits in the top bar on every
+// screen: the Amharic text is an unreviewed draft and alerts stay in English.
+// A tap opens the full notice in a dialog; it never navigates, so a form in
+// progress is kept. It sits beside the clock's time (updateClock), inside the
+// width the Ethiopian date already takes, so the title keeps its room at
+// phone width (.draft-chip in css/app.css).
+
+function draftChip() {
+  if (getLang() !== 'am') return null;
+  return h('button', {
+    type: 'button', class: 'draft-chip',
+    title: amharicDraftNotice().join(' '), 'aria-haspopup': 'dialog', onclick: showDraftNotice,
+  }, t('rp.am_draft_chip'));
+}
+
+function showDraftNotice() {
+  const close = openModal(h('div', null,
+    h('h2', null, t('rp.am_draft_title')),
+    amharicDraftNotice().map(line => h('p', null, line)),
+    h('div', { class: 'wizard-nav' },
+      h('button', { type: 'button', class: 'btn', onclick: () => close() }, t('rp.close'))),
+  ));
 }
 
 // -------------------------------------------------------------- render -----
@@ -106,6 +132,8 @@ function render(reason = 'navigate') {
   }
   const r = route();
   shown = r;
+  // screen readers and the browser's own spelling and font choices follow the screen language
+  document.documentElement.lang = getLang() === 'am' ? 'am' : 'en';
   clear(app);
 
   const clockEl = h('div', { class: 'clock' });
@@ -150,6 +178,7 @@ function updateClock(el) {
   el.innerHTML = '';
   el.append(
     now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: APP_TZ }),
+    draftChip() || '', // null in English: append() would print "null"
     S.settings.ethiopianDates ? h('span', { class: 'ec' }, formatEthiopic(eatDate(now), S.settings.lang)) : '',
   );
 }
@@ -279,7 +308,7 @@ async function tick() {
       console.error('Heartbeat check failed for case ' + p.id, err);
       if (!tickFailed.has(p.id)) {
         tickFailed.add(p.id);
-        toast(`${p.name}: automatic checks failed - review this case`, 'danger');
+        toast(t('rp.tick_failed', { name: p.name }), 'danger');
       }
     }
   }
@@ -310,10 +339,10 @@ function bootError(err) {
   clear(app);
   app.append(h('div', { class: 'page' },
     h('div', { class: 'card' },
-      h('h2', null, 'Could not open the local database'),
+      h('h2', null, t('rp.db_failed')),
       h('p', null, String((err && err.message) || err)),
-      h('p', { class: 'muted' }, 'Private browsing, a full disk, or an older browser can cause this. Labour records live only in this browser profile; nothing has been deleted.'),
-      h('button', { class: 'btn', onclick: () => location.reload() }, 'Retry'),
+      h('p', { class: 'muted' }, t('rp.db_failed_help')),
+      h('button', { class: 'btn', onclick: () => location.reload() }, t('rp.retry')),
     ),
   ));
 }
