@@ -71,10 +71,15 @@ export function txt(x, y, s, o = {}) {
 export const ln = (x1, y1, x2, y2, stroke, w = 1, extra = '') =>
   `<line x1="${n1(x1)}" y1="${n1(y1)}" x2="${n1(x2)}" y2="${n1(y2)}" stroke="${stroke}" stroke-width="${w}"${extra}/>`;
 
-/** A dipstick grade as written on the chart: '-' negative, 'tr' trace, else the grade. */
+/**
+ * A dipstick grade as written on the chart: '-' negative, 'tr' trace, '+'
+ * to '++++' (whatever notation was stored: '++', 'P++', '2+'), '?' when it
+ * cannot be graded (shown, never read as negative). The caller adds P or A.
+ */
 export const urineText = g => {
   const n = urineGrade(g);
-  return n === 0 ? '-' : n === 0.5 ? 'tr' : String(g);
+  if (n == null) return '?';
+  return n === 0 ? '-' : n === 0.5 ? 'tr' : '+'.repeat(Math.round(n));
 };
 
 // ------------------------------------------------ circles and acknowledgement ----

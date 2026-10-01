@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chartSVG, printSheetsHTML } from '../js/chart.js';
-import { planText, flagState } from '../js/partograph.js';
+import { planText, flagState, urineText } from '../js/partograph.js';
 import { NOW, iso, mkPatient, LCG, ETH } from './helpers.mjs';
 import { applyObservations } from '../js/record.js';
 
@@ -77,4 +77,13 @@ test('flagState: an alert closed when raised (needsAck false) draws its value as
   assert.equal(flagState(quiet, o, 'fhr'), 'ack');
   const open = new Map([['o1', [{ code: 'fhr_abn' }]]]);
   assert.equal(flagState(open, o, 'fhr'), 'open', 'an ordinary unacknowledged alert stays red');
+});
+
+test('urineText writes one notation whatever was stored, and never reads an ungradable value as negative', () => {
+  assert.equal(urineText('++'), '++');
+  assert.equal(urineText('P++'), '++', 'no double P on the chart');
+  assert.equal(urineText('2+'), '++');
+  assert.equal(urineText('neg'), '-');
+  assert.equal(urineText('trace'), 'tr');
+  assert.equal(urineText('xyz'), '?');
 });
