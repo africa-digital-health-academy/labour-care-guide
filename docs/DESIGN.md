@@ -166,4 +166,4 @@ The acknowledgement window (15 min), the score weights and the "LCG completed" d
 - **Engine and records:** the alert lifecycle, the record layer (void, correct, re-derivation, birth record history), the PPH trigger and its re-opening, migration and the restore matrix.
 - **Outputs:** audit windows and score, indicators with Robson groups and the CSV writer, chart SVG markers (X, O, P, circles, continuation sheets), wizard and view logic, FHIR bundle shape, the Ethiopian calendar, the stepper, and the sw-manifest guard.
 
-The screens are checked by browser walks of the demo case (M3, M4, and M6 before publication), and milestones M2 to M4 each had two independent clinical review passes. When a test fails, the implementation is fixed, not the test, unless the test itself is wrong.
+The screens are checked by browser walks of the demo case (M3, M4, and M6 before publication), and milestones M2 to M6 each had two clinical-safety review passes by a separate AI model (not a clinician). When a test fails, the implementation is fixed, not the test, unless the test itself is wrong.

@@ -54,7 +54,7 @@ facility use before the clinical panel review.
 - docs/GAP_REGISTER.md: the gap register F1-F14, N1-N5 and S1-S13 with the
   WHO citation, the code and the test for every item. Screenshots of the
   verification walk (demo data) in docs/screenshots/.
-- Engine, from the independent review against the WHO texts: a re-opened
+- Engine, from the automated review passes against the WHO texts: a re-opened
   alert always asks again; an answer left at its default is never evidence
   that closes an alert; the PPH trigger is cumulative over the 24 hours (a
   drape reading entered late still meets a sign recorded after it) and
@@ -65,7 +65,7 @@ facility use before the clinical panel review.
   an open alert waits for an answer that would clear it, the wizard step
   starts with nothing selected, so a default can no longer leave it open
   unnoticed.
-- Independent clinical review against the WHO form, manual and
+- Clinical-safety review by a separate AI model (not a clinician) against the WHO form, manual and
   implementation resource package, two passes: every alert value, recording
   interval and stage limit matches, and every deviation is stricter or
   added, never looser. Pass 1: safe to publish as a public preview after one
@@ -151,7 +151,7 @@ follow-ups, and the documentation for v2.
 - Documentation: DESIGN (render model, correction model, alert lifecycle,
   audit and indicators, release process), RESEARCH (implementation package,
   PPH guidelines 2025), ROADMAP (v2.1) and the README for the new name.
-- Independent clinical review, two passes, and two browser walks. Pass 1
+- Clinical-safety review by a separate AI model, two passes, and two browser walks. Pass 1
   found no critical issue and four to fix before facility use, all fixed:
   progress alerts that depend on earlier exams were not re-judged; a
   back-timed entry was judged against the current stage; one preselected
@@ -187,7 +187,7 @@ reports show the WHO implementation indicators.
   LCG score, voided entries and total blood loss) that open cleanly in Excel.
 - A corrected birth can no longer be timed after a postpartum check already
   recorded; closing a case is rule-checked and tested.
-- Independent clinical review, two passes, and a browser walk of chart, print,
+- Clinical-safety review by a separate AI model, two passes, and a browser walk of chart, print,
   continuation, the Ethiopian partograph and reports.
 - Tests: 344, up from 297.
 
@@ -228,7 +228,7 @@ The screens now feed the M2 engine and keep what the midwife types.
 - The ward board and the alert strip count only open alerts; closed alerts
   still awaiting acknowledgement are shown apart.
 - Phone width: every screen fits 360 px without sideways scrolling.
-- Independent clinical review, two passes. Pass 1 found no critical issue and
+- Clinical-safety review by a separate AI model, two passes. Pass 1 found no critical issue and
   three to fix before facility use, all fixed: the birth record saved
   untouched "placenta complete", "perineum intact" and "no resuscitation" as
   facts; admission recorded an unexamined cephalic presentation; postpartum
@@ -296,7 +296,7 @@ yet (M3); the engine is wired into the existing ones.
   and a formula guard.
 - The chart is split into a pure chartSVG() that the tests can run; voided
   entries are never drawn.
-- Independent clinical review, pass 1, found and this milestone fixed: new
+- Clinical-safety review by a separate AI model, pass 1, found and this milestone fixed: new
   cases were saved without a schema version, so a reload could mark a
   referred woman as departed and stop her monitoring (cases are now created
   in the current schema and referrals start as "not yet left"); voiding a
