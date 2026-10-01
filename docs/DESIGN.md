@@ -1,60 +1,169 @@
 # Design decisions
 
-## 1. Why an offline-first PWA (and not a native app or platform fork)
+How the Labour Care Guide app is built, and why. This covers version 2 (repository `labour-care-guide`), started from the Parthograph v1.3.0 tree after the audit in [WHO_ALIGNMENT_2026.md](WHO_ALIGNMENT_2026.md). Codes in brackets refer to that audit's gap register: F (fidelity to the WHO form), N (new capabilities from the 2025 WHO documents), S (safety-grade defects found in v1). The evidence behind the choices is in [RESEARCH.md](RESEARCH.md); what comes next is in [ROADMAP.md](ROADMAP.md).
 
-**Constraints** (from the Ethiopian context, see RESEARCH.md):
-- Only ~23% of facilities have power with <2 h/day interruption; ~44% of the population has 4G. Connectivity is a bonus, never a requirement.
-- Health centres have no EMR today (EMRs exist in only ~70+ high-caseload facilities nationally). There is no server to talk to yet.
-- Budget ≈ 0. Hosting must be free (GitHub Pages); devices are shared Android tablets.
+## 1. Why an offline-first PWA (and not a native app or a platform fork)
+
+**Constraints** (Ethiopian context, see RESEARCH.md):
+- Only about 23% of facilities have power with less than 2 h/day of interruption, and about 44% of the population has 4G. Connectivity is a bonus, never a requirement.
+- Health centres have no EMR today (EMRs exist in about 70 high-caseload facilities nationally). There is no server to talk to yet.
+- Budget close to zero. Hosting must be free (GitHub Pages); devices are shared Android tablets.
 
 **Options considered:**
+
 | Option | Verdict |
 |---|---|
-| OpenSRP 2 / fhircore (Kotlin, FHIR-native) | Strongest *platform*, but heavy: requires Android dev toolchain, server infrastructure, and configuration expertise. Right choice for a national-scale rollout — wrong for a zero-infrastructure pilot. Documented as the scale-up path in ROADMAP.md. |
-| Flutter / React Native | App-store or APK distribution friction; build toolchain; no benefit at this stage. |
-| **Vanilla-JS PWA (chosen)** | No build step, no dependencies, auditable by any developer, serves from GitHub Pages, installs to home screen, full offline via service worker + IndexedDB. The entire clinical logic is ~2 files a clinician-programmer can read. |
+| OpenSRP 2 / fhircore (Kotlin, FHIR-native) | The strongest platform, but heavy: Android toolchain, server infrastructure and configuration expertise. Right for a national rollout, wrong for a zero-infrastructure pilot. Kept as the scale-up path in ROADMAP.md. |
+| Flutter / React Native | App-store or APK distribution friction and a build toolchain, with no benefit at this stage. |
+| **Vanilla-JS PWA (chosen)** | No build step, no dependencies, auditable by any developer, served as static files, installs to the home screen, fully offline with a service worker and IndexedDB. The clinical logic sits in a few pure modules that a clinician-programmer can read. |
 
-A deliberate consequence: **no patient data ever leaves the device** in v1. That sidesteps Ethiopia's unsettled health-data-hosting questions for a pilot, but means backup discipline matters (built-in JSON backup/restore + CSV export).
+A deliberate consequence: **no patient data leaves the device**, in v1 or in v2. That sidesteps Ethiopia's unsettled health-data-hosting questions for a pilot, but makes backup discipline matter: JSON backup and restore, CSV exports, and automatic snapshots inside the browser database (section 4).
 
-## 2. Dual-protocol engine
+## 2. Protocols: the WHO LCG by default, the Ethiopian partograph as a legacy option
 
-Ethiopia's operative standard is still the **modified WHO partograph** (MOH Obstetrics Management Protocol for Health Centers, 2021): active phase at 4 cm, alert line 1 cm/h, action line +4 h. WHO's **Labour Care Guide (2020)** replaces alert/action lines with per-centimetre time limits and starts active phase at 5 cm. A new National Intrapartum Care Guideline was launched in June 2024 whose full text we could not verify; facilities may be audited against either standard during the transition.
+`js/protocol.js` holds two protocols as data (schedules, limits, line geometry):
 
-Therefore `protocol.js` implements **both** as data (schedules, thresholds, line geometry), selected in Settings. Cases keep their protocol; the chart renderer draws alert/action lines (Ethiopian mode) or progress-limit windows (LCG mode) from the same data.
+- **`lcg` - WHO Labour Care Guide (2020), the default**, encoded as published (form, user's manual, 2025 implementation package). Active first stage from 5 cm; per-centimetre lag limits (5 cm 6 h, 6 cm 5 h, 7 cm 3 h, 8 cm 2.5 h, 9 cm 2 h) instead of alert and action lines; active first stage usually no longer than 12 h in first labours and 10 h in later labours (F5); second-stage limit of 3 h (nulliparous) or 2 h (multiparous) counted from when pushing began, the form's P (F2). Until P is recorded the clock runs from full dilatation, which can only make the alert earlier.
+- **`ethiopia2021` - the modified WHO partograph** of the MOH Obstetrics Management Protocol for Health Centers (2021), kept for facilities still audited on it: active phase from 4 cm, alert line at 1 cm/h starting at the first active dilatation (S7; v1 started it at 4 cm whatever the admission finding), action line 4 h to its right, second stage timed from full dilatation.
 
-**Action item before facility use:** obtain the 2024 National Intrapartum Care Guideline (MOH/ESOG) and reconcile `protocol.js` thresholds with it.
+Each case stores the protocol it was admitted under (`protocolId`, since M1). The Settings switch changes new admissions only (S2: in v1 it changed the standard applied to women already in labour).
 
-## 3. The wizard (why not a form?)
+Every clinical threshold lives in `protocol.js` (`PROTOCOLS`, `LIMITS`, `POSTPARTUM`) or in `alerts.js` (`FLAG` and the rules), never in a screen (S13), so a guideline change is a one-file review. A missing parity takes the stricter limit and says so (S12). Values marked `PANEL-TO-CONFIRM` in the code are placeholders the Ethiopian obstetric and midwifery panel must confirm before facility use; ROADMAP.md lists them.
 
-Field evidence: real-time data capture collapses under workload (DAKSH: only 29–55% of points captured in real time; worst for contractions). Forms demand literacy in the form; wizards demand only the answer to one question. Decisions:
+**National adaptation.** A National Intrapartum Care Guideline was launched in June 2024, but its text could not be obtained. Until it is, the app encodes the WHO LCG without national adaptation. When it is obtained, its adaptations go into `protocol.js` as a reviewed overlay or a third protocol (ROADMAP.md, v2.1).
 
-- **One question per screen**, huge touch targets, numpad/steppers/segments — usable with one hand standing at a bedside.
-- **Back-timing up to 60 min** ("when were these observations made?") — the Kenya ePartogram's 30-min lock-window improved compliance but broke at >4 mothers/midwife. We remind loudly but never block late entry.
-- **Due-chip → one tap → wizard pre-scoped** to exactly what is due.
-- Defaults are committed (decelerations "none", supportive care "yes") so skipping through normal findings still documents them — absence of data and normal findings are different things on a partograph.
+## 3. The wizard (why not a form)
 
-## 4. Alert philosophy
+Field evidence: real-time capture collapses under workload (DAKSH: only 29-55% of points captured in real time, worst for contractions). A form demands literacy in the form; a wizard demands only the answer to one question.
 
-- **Two real tiers** (`warn` = review, `danger` = act now) + silent `info` for supportive-care nudges. Sounds differ; info never sounds.
-- **De-duplication**: an unresolved alert of the same code escalates rather than stacks (alert fatigue was a consistent failure mode in the literature).
-- **Every alert demands an acknowledged decision** (continue monitoring / senior called / intervention / referral started) which is written to the notes — this implements the LCG's *shared decision-making* row and creates an audit trail.
-- **Time-based checks run on a 30 s heartbeat** independent of data entry: progress-limit reached, second-stage duration, prolonged ROM, projected alert/action-line crossing. A midwife who is too busy to chart still gets warned.
-- Advice text is **health-centre (BEmONC) scoped**: stabilise + refer for anything needing surgery/transfusion; explicit pre-referral bundles (MgSO₄ dosing spelled out).
+- **One question per screen**, large touch targets, numpad, stepper or big buttons: usable with one hand at a bedside.
+- **Back-timing up to 60 min** ("when were these observations made?"). The Kenya ePartogram's 30-minute lock-out improved compliance but broke at more than 4 women per midwife, so the app reminds loudly and never blocks a late entry. Once a birth is recorded, earlier times are not offered.
+- **Due chip, one tap, wizard scoped** to exactly what is due.
+- **The WHO codes as on the form** (F1, F7, F9, F12): supportive care Y, N or D (declined); amniotic fluid I, C, M+, M++, M+++, B; urine Negative, Trace, + to ++++; posture shown as SP or MO on the chart.
+- **Defaults are visible and audited.** Normal answers are pre-selected where that matches routine findings (no decelerations, cephalic, no caput or moulding, supportive care yes, upright), so skipping through normal findings still documents them. Every value committed without being touched is listed in the entry's `defaulted` field, so the audit reports it apart from what the midwife chose.
+- **No silent pre-fill** (S6): the last examination's dilatation and descent are shown greyed as a starting point and are saved only when touched.
+- **Initials on every entry** (F3), asked on the time screen and shown before every save. They are remembered for the browser session only, so a colleague taking over a shared tablet is asked again; the provider name in Settings is just a fallback.
+- **Correction mode**: the same flow, prefilled with an entry's values, records a correction (section 5).
+- The alert marks on the buttons and the numpad hints come from `FLAG`; no threshold is written in the wizard.
 
-## 5. Chart
+## 4. Data model and storage
 
-SVG, drawn from the observation list every render — no chart state to corrupt. Layout mirrors the paper LCG (FHR → fetal codes → cervicograph → contractions → medication → maternal vitals) because midwives are trained on the paper form; the digital version must be instantly recognisable to them and to the hospital receiving a printed referral.
+One JSON document per labour case in the IndexedDB `patients` store (database `labour-care-guide`, version 2, with a `settings` store and a `backups` store). A case holds:
 
-## 6. Data model
+- identity, risk factors and the admission record (`admission` keeps the admission values for the summary card, the indicators and the admission risk), labour onset (`onsetMode`), rupture of membranes (`romTime`, or `romUnknown` for the form's U), `protocolId`, `status` and the stage times `activeStartTime` and `secondStageStart`;
+- `obs[]`, typed entries (`baby`, `contractions`, `pulse`, `vitals`, `exam`, `supportive`, `oxytocin`, `event` for pushing, `bloodloss`, `ppMother`, `ppBaby`), each with an `id`, the observation `time`, `enteredAt`, `source` (admission or entry), `by` (initials) and values `v`, and where they apply `defaulted`, `flags`, `voided` and `replaces`;
+- `meds[]`, `notes[]` (assessment and plan) and `alerts[]` (section 6);
+- `delivery`, `newborn` and `deliveryHistory[]` (corrected birth records), `referral` (with `handoverAt`, the departure) and `pph.bundle` (each first-response step with time and initials).
 
-One JSON document per labour case (IndexedDB `patients` store): identity + admission + `obs[]` (typed observations) + `meds[]` + `alerts[]` + `notes[]` + delivery/newborn/referral objects. Documents are small (a long labour ≈ tens of KB); a whole month of cases exports as one backup file. The FHIR exporter (`fhir.js`) maps this to standard resources at export time rather than storing FHIR natively — simpler now, swappable later.
+Documents stay small (a long labour is tens of KB); a month of cases fits in one backup file.
 
-## 7. Internationalisation & calendar
+**Schema.** Every case carries `schemaVersion` (currently 3). `js/migrate.js` is pure, idempotent and add-only: it brings older cases forward on load and on restore, and the store snapshots the pre-migration records into `backups` before anything is overwritten. New cases are created in the current schema (`record.createCase`), so the migration never runs on them.
 
-- Chart and clinical alert text: **English** (Ethiopian clinical training and the paper partograph are in English).
-- UI labels: `i18n.js` with English + draft Amharic; structure ready for Afaan Oromo, Tigrinya, Somali, Afar.
-- **Ethiopian calendar** (Beyene–Kudlek JDN conversion, unit-tested) shown beside Gregorian everywhere a date appears — facilities document in EC dates.
+**Backup and restore** (S11). The JSON backup holds every case and the settings. Restore first shows a dry run (new, updated, unchanged); the newer record wins by `updatedAt`, a tie keeps the local record, and the local records are snapshotted before anything is written. Parthograph v1 backup files are accepted. That is the only path from v1 to v2: v2 is a new web origin, so installed v1 tablets are untouched.
 
-## 8. Testing
+**FHIR.** `js/fhir.js` maps a case to an R4 Bundle at export time instead of storing FHIR natively: simpler now, swappable later. The mapping is in [FHIR_MAPPING.md](FHIR_MAPPING.md).
 
-`test/smoke.mjs` (plain Node, no framework) covers: EC calendar conversions and roundtrips, schedule due/overdue computation, alert/action-line geometry, LCG stagnation alerts (obs- and time-triggered), second-stage duration by parity, prolonged ROM, FHIR bundle structure and codes. UI was manually verified in Chrome (wizard flow, alert chain, referral pre-selection, chart rendering).
+## 5. The correction model (`js/record.js`)
+
+v1 could not edit or void anything: a mistyped 10 cm started the second stage for good, and "Delete case" was a hard delete (S5). In v2 every write goes through the record layer, `js/record.js`. It has no DOM and no I/O; it changes the live case object it is given and returns what changed, and the caller saves with `savePatient()`.
+
+- **Append-only.** Nothing is deleted. Voiding an entry needs a reason and initials and adds `voided: {at, by, reason}`; the values stay, shown struck through with the reason. A correction is a void plus a new entry at the same observation time that names the one it replaces (`replaces`). The entries list offers Void and Correct on each entry; Correct reopens the wizard in correction mode. A pushing mark has no values to correct: it is voided and recorded again.
+- **Consequences first.** `previewVoid()` runs the void on a copy, and the confirmation states what will change: the stage reverted or moved, the alerts that will close, the alerts that will re-open.
+- **Stage and ROM re-derived after every write.** `deriveStage()` recomputes the start of the active first stage (the first surviving exam at or above the protocol's active dilatation), the start of the second stage (the first surviving 10 cm exam) and the status, and never changes a terminal status (delivered, referred, closed). Voiding a mistyped 10 cm exam therefore returns the woman to the active first stage with its timers. The rupture time is re-derived the same way, from the earliest surviving entry that found fluid, unless it was reported at admission or recorded as unknown. The alerts are then reconciled (section 6).
+- **Restaging.** Some rules depend on the stage: weak and short contractions alert only once active labour has begun, and the progress limits and partograph lines apply in the active first stage only. When a stage start moves (a back-timed exam, a void, a correction), every entry whose stage at its own time crossed one of these gates is judged again, as the case stood at that time, so a later exam never changes what an earlier one meant. Its flags follow; a code it now raises opens or joins an alert; an alert left with no entry behind it closes ("restaged"). The chart circles are drawn from these flags and alerts, so it never shows a red circle with no alert behind it.
+- **Admission entries** carry their corrections into the `admission` record, so the summary card, the indicators and the admission risk follow them.
+- **Events.** Pushing began (the P) is an `event` entry, voidable like any other. A referred woman's departure is recorded on the referral (`handoverAt`); until then she stays monitored (S8), and at departure her labour clocks stop.
+- **Birth record history.** `voidDelivery()` moves the birth and newborn records into `deliveryHistory` with author and reason. The alerts the birth raised resolve, the labour findings the birth had closed re-open, the stage is re-derived, and the birth can be recorded again. A re-recorded birth may not be timed after a postpartum check still in the entries, because the watch counts checks only from the birth time.
+- **Cases are closed, never deleted.** Closing needs initials and is refused while she is in labour, or referred and not yet gone. Only DEMO cases can be deleted.
+
+## 6. The alert engine and the alert lifecycle (`js/alerts.js`)
+
+**Severities.** `warn` means review: recheck, follow the LCG plan step, alert a senior. `danger` means act now: senior review, intervention or referral. Danger and due alarms sound different. `info` is a silent note and never sounds; since M2 no rule raises it, because the supportive-care rows became `warn` alerts (F1).
+
+**Coverage.** Every value in the Alert column of the WHO form raises an alert, including the supportive-care rows (F1), thick meconium or blood found at a vaginal examination (F7), and a contraction duration on its own, with a prompt to verify over another 10 minutes (F8). Rules kept from v1 that are not WHO alert values (severe tiers, moulding ++, a second-stage early warning, prolonged rupture of membranes) are labelled as such in the code. Advice is scoped to health-centre (BEmONC) care: stabilise, and refer anything that needs surgery or transfusion, with explicit pre-referral bundles (MgSO4 doses spelled out). Advice paraphrases the WHO texts and stays in English (section 10).
+
+**Acknowledgement.** Every alert needs an acknowledged decision - continue close monitoring, senior called, intervention given, referral started - with initials. The decision is stored on the alert (with a count of its acknowledgements) and written to the notes as an acknowledgement note. This is the digital form of the instruction on the WHO sheet to circle the value, alert a senior and record the assessment and action; choosing referral opens the referral tab. An alert asked again (step 2 below) shows its repeat number and the last acknowledgement, and the dialog starts on the action taken then, never on a lesser one.
+
+**Lifecycle (S1).** v1 raised each alert code once per woman and never resolved it, so a recurrence was silent. In v2 each alert is linked to the entries that raised it and stamped with the observation time, not the entry time (S12). Nothing is ever deleted; an alert moves through these steps:
+
+1. **Open.** A repeat finding of the same code updates the open alert (count, last seen, linked entries) instead of stacking a second one.
+2. **Escalation and re-asking.** A worse severity re-opens the alert for acknowledgement (`escalatedAt`). After an acknowledgement, a new entry that meets the alert criteria asks again (`reAlertedAt`), because the form asks for action on every alert value; its circle on the chart turns red again. A time rule fires again on every tick without asking again. PPH asks again only on new evidence: more blood measured, or a new abnormal sign.
+3. **Evidence resolution.** `RESOLVE_ON` lists, for each code, the entry types and fields that can clear it. A later, non-voided entry that carries those fields and does not itself raise any code of the same family resolves the alert (resolved by evidence). The check is idempotent and independent of entry order, so back-timed entries behave the same.
+4. **Time-rule clearing.** Time rules (progress limit reached, active first stage over 12 or 10 h, second-stage duration, prolonged rupture of membranes, latent phase over 8 h under the national rule, the Ethiopian line projections) run on the heartbeat, independent of data entry. An open time alert whose rule no longer fires resolves as cleared. At birth or departure their clocks stop and they close.
+5. **Void and restaging.** When an entry is voided, alerts that rested only on it resolve, and alerts it had resolved as evidence re-open: a mistyped normal value must not keep a real finding closed. When a stage start moves, stage-gated alerts follow the entries judged again (section 5).
+6. **By hand.** A Resolve button closes an alert with a reason and initials, for a finding that no longer applies.
+7. **Re-arm by episode.** A finding after resolution opens a new, unacknowledged alert with the next `episode` number.
+8. **Birth.** Findings about the labour itself (the baby in utero, progress, supportive care) close at birth. Maternal findings (pulse, BP, temperature, urine) stay open into the postpartum watch.
+
+**Sticky findings.** Codes without a `RESOLVE_ON` entry never resolve on evidence: thick meconium (M+++) and blood-stained fluid, whose meaning lasts until birth; manual emergency alerts; birth and admission alerts; and PPH. They close by hand; in addition, the two fluid findings close at birth, birth alerts close when the birth record is voided, and PPH closes when the readings behind it are voided and the trigger is no longer met. A test guards that every observation rule either can resolve or is deliberately sticky.
+
+**PPH (N3; WHO/FIGO/ICM 2025).** `pphTrigger()` applies the two-level trigger within 24 h of birth, from `LIMITS.pph`: measured blood loss of 500 mL or more, or 300 mL or more with any abnormal sign (pulse above 100, shock index above 1, systolic below 100 or diastolic below 60 mmHg). The loss is the highest calibrated-drape reading (a drape shows a running total, so readings are not added) or the birth record's estimate, whichever is higher; the signs come from the latest pulse and BP since birth. The PPH alert and the emergency card carry the MOTIVE first-response bundle with tranexamic acid, and the PPH card keeps each bundle step with time and initials. A closed PPH re-opens only on new evidence (more blood than at closure, or a sign absent at closure); an episode closed because its readings were voided sets no bar, so a voided 6500 mL typo cannot silence a real 550 mL bleed. Prevention: the third-stage checklist asks for a uterotonic within 1 minute (oxytocin 10 IU IM, or heat-stable carbetocin 100 micrograms IM), controlled cord traction and a uterine tone check. Routine uterine massage was removed (WHO 2018 recommendation 46).
+
+**Known trade-off.** The re-asking rule can mean up to 12 acknowledgements an hour for a persistent abnormal FHR in the second stage, where the FHR is recorded every 5 minutes. It follows the WHO instruction; the clinical panel is asked to confirm it.
+
+## 7. The render model (`js/app.js`)
+
+v1 re-rendered the whole page on every save - the 30-second tick's, another woman's time alert - and wiped forms being filled (S3). v2 separates navigation from data changes:
+
+- **Two reasons to render.** `render('navigate')` (a route change) always rebuilds the page. `render('data')` (any save on the store bus, or a release notice) rebuilds only when no form is in progress; otherwise it calls `refreshLive()`.
+- **The `data-form` / `data-saved` guard.** A form in progress is an element in the page that carries `data-form` without `data-saved`. The admission, birth record, referral, note, 10-minute APGAR and PPH forms carry `data-form`, and so does the Settings page from its first change until it is saved. A form that starts empty starts with `data-saved` and loses it at the first entry, so an empty form never holds up a refresh. A save handler sets `data-saved` just before `savePatient()`, so the save that completes a form does rebuild the page; if the save fails, the attribute is removed and the typed values stay protected.
+- **Modals are outside the page.** The wizard, the acknowledgement, the medication modal and the confirmation and prompt dialogs live in `#modal-root`, outside `#app`, so no render touches them.
+- **`data-live` swaps.** `refreshLive()` updates the clock and the update chip in the top bar, rebuilds the ward board (it holds no forms), and on a case view replaces only the regions marked `data-live`: `patient-header`, `alert-strip`, and the chart inside `data-live="chart"` when the chart tab is open. A region that is, or contains, a form in progress is never swapped; identical markup is left alone; the chart keeps the midwife's scroll position unless she was looking at the newest data.
+- **The heartbeat.** Every 30 seconds `tick()` visits each woman in labour or in the postpartum watch. In labour it runs the time rules (`refreshTimeAlerts`) and saves when an alert opened or cleared, with a toast for a new one; for every case it tracks due and overdue transitions. It then sounds once (danger before due; silent when sound is off in Settings) and calls `refreshLive()` - never a full render. A malformed case cannot silence the heartbeat for the others: its failure is caught, logged and shown once.
+- **Alarms and the screen.** Audio is unlocked on the first tap or key press (browser autoplay policy, S9); a sound that cannot play falls back to vibration, and danger alarms also vibrate. The screen is kept awake while the app is in the foreground, and persistent storage is requested so the browser does not evict the records.
+
+## 8. Chart and print
+
+The chart is SVG drawn from the entries on every render: there is no chart state to corrupt. `chartSVG()` is pure, so the tests run it in Node; `renderChart()` and `renderPrintSheets()` wrap it for the page.
+
+- **WHO LCG cases mirror the WHO sheet** (M4), because midwives are trained on the paper form and the receiving hospital reads printed copies: the sections in the form's order (supportive care, baby, woman, labour progress, medication, shared decision-making, initials); an ALERT column written from `FLAG` and `LIMITS`; 12 hourly columns of active first stage plus a 3-hour second-stage panel; a narrow latent and admission panel with real time spans. X marks dilatation, O marks descent on its own row (F14), P marks where pushing began (F2). Values are written in the form's codes (F12). Every alert value is circled: solid red until the alert it raised is acknowledged after that value, then dashed grey. The assessment and plan rows carry the notes (F13).
+- **Continuation** (F6): an active first stage longer than 12 hours continues on further sheets, with sheet buttons on screen.
+- Nothing is drawn from voided entries or after the birth; an FHR beyond the scale is labelled.
+- **Ethiopian 2021 cases** keep the v1 partograph layout, with the alert and action lines anchored at the first active dilatation (S7) and descent on the cervicograph. Since M5 it lives in `js/partograph.js` (split out of `chart.js`), together with the drawing kit both layouts share: SVG primitives, the alert circles and their acknowledgement state, FHR values beyond the scale, the after-birth rule, and the print header and notes appendix. `chartSVG()` hands Ethiopian cases to `partographSVG()`.
+- **Print** (`css/print.css`, loaded for print only): each LCG sheet on its own A4 landscape page with a header naming the woman, then an appendix with every note and medication in full; the app chrome is hidden; the case summary and the referral note print in portrait.
+
+## 9. Audit and indicators
+
+**Per-case audit** (`js/audit.js`, N2): a digital translation of the WHO LCG clinical audit tool for routine use (implementation resource package 2025, Annex 8).
+
+- The active first stage and the second stage are cut into windows of each row's recording interval, like the columns of the paper form (`PROTOCOLS.lcg.recording`: supportive care hourly; FHR and contractions every 30 min, 15-minute cells in the second stage; pulse, BP, temperature, urine and the vaginal examination every 4 h). A window is met when a non-voided entry of that row falls inside it. A window counts once it has ended; while a stage is still running, the due chips' 10-minute grace applies first.
+- Sections: header (name, parity, labour onset), supportive care, baby, woman, labour progress, medication (oxytocin recorded every 60 min while it runs), shared decision-making (an assessment or plan in each hour; an acknowledgement note does not count), initials (every entry in an hour signed), and alert handling. Circling is automatic in a digital form, so what is audited is the human step: an acknowledgement with an action within `LIMITS.audit.ackWithinMin`.
+- Defaulted values count but are reported separately; voided entries never count. Stage durations flag an active first stage of 12 h or more and a second stage of 3 h or more.
+- A weighted score from 0 to 100 (weights in `LIMITS.audit.weights`) appears on the case and in the register export. A case whose active first stage never began is not applicable.
+
+**Facility indicators** (`js/indicators.js`, N1), computed from the device's own records: the six indicators of the implementation resource package, Table 3 - LCG use, FHR documented on admission, BP measured on admission, companion of choice (wanted and had, with the first and second stages apart), caesarean rate with the Robson Ten-Group table, and institutional stillbirths (antepartum or intrapartum, before or after admission) - plus the monthly HMIS counts.
+
+- Counting rules: births by birth date, admissions by admission date; demo cases never count.
+- Operational choices, all visible in the code: "LCG completed" means name and parity recorded and at least one entry in each core section; a companion answer that holds only N on a v1 record is unknown, since v1 had no D code; a stillbirth with no recorded timing counts macerated as antepartum and fresh as intrapartum, and an FHR heard on admission as a death after admission; Robson groups need parity, previous caesarean, labour onset, gestational age, presentation and the number of babies, and a case missing one is reported as unclassified.
+- The reporting month is a Gregorian month in East Africa Time, labelled with its Ethiopian calendar dates.
+- CSV exports start with a UTF-8 byte-order mark (Ge'ez names open correctly in Excel) and guard against spreadsheet formula injection.
+
+The acknowledgement window (15 min), the score weights and the "LCG completed" definition are marked `PANEL-TO-CONFIRM`.
+
+## 10. Languages, calendar and time
+
+- Interface strings go through `t()` in `js/i18n.js`: English is complete; Amharic is a draft, labelled as one in Settings and by a marker in the top bar of every screen. Since M5 the screens' strings live in per-area fragments (`js/i18n/wizard.js`, `patient.js`, `forms.js`, `reports.js`, with the key prefixes `wz.`, `pt.`, `fm.`, `rp.`) that `i18n.js` merges; it also exports the English key list (`EN_KEYS`) and the share of keys with an Amharic draft (`amharicCoverage()`). The completeness test (`test/i18n.test.mjs`) fails on any `t()` key the code uses that does not exist, and on an Amharic draft whose placeholders differ from the English. `t()` fills `{name}` placeholders in one pass with a replacer function, so free text such as a reason is never rewritten. The structure is ready for Afaan Oromo, Tigrinya, Somali and Afar.
+- Records stay in English whatever the screen language: referral reasons and checklist labels, the referral note (printed and shared), acknowledgement notes and medication details are stored and shared in English, because FHIR, the CSV exports, the audit and the receiving hospital read them. When the screen is not in English, a translated line above the referral note says why.
+- Alert titles and advice, and the chart, stay in English. They are clinical instructions (drug doses included), Ethiopian clinical training and the paper LCG are in English, and a machine-drafted translation must not reach midwives before the clinical panel validates it.
+- Clinical abbreviations (FHR, BP, MgSO4, mL, cm, APGAR, PPH) stay in Latin script inside Amharic text, as Ethiopian clinicians write them.
+- The Ethiopian calendar (Julian Day Number conversion, Beyene-Kudlek method, unit-tested) is shown beside the Gregorian date wherever a date appears; facilities document in Ethiopian dates. Amharic screens write the era as Amharic does (the Amete Mihret abbreviation) instead of EC.
+- Every displayed and entered time is pinned to East Africa Time (Africa/Addis_Ababa, UTC+3), whatever the tablet's own time-zone setting. Times use the international 12-hour clock in both languages; Ethiopian local time-telling, six hours apart, is not used, so a time is never read two ways.
+
+## 11. Release process
+
+- **One version constant.** `js/version.js` sets `self.LCG_VERSION` (now `2.0.0-dev`; `2.0.0` at publication). It is a classic script so that the service worker can `importScripts()` it; the app imports it too. The offline cache key (`lcg-` plus the version) and the About screen follow it, and `package.json` carries the same version.
+- **Atomic, versioned shell** (S10). `sw.js` lists every file of the app in `SHELL` and pre-caches them under the versioned cache, fetched fresh (`cache: 'reload'`, bypassing the HTTP cache) through an all-or-nothing `addAll`. Shell files and page loads are served cache-first from that cache, so a running release never mixes modules from two versions. Other same-origin requests are stale-while-revalidate; cross-origin requests go to the network. Activation deletes the caches of older versions.
+- **Update chip.** A new release installs in the background and waits. The app then shows an "Update ready" chip in the top bar (with a form in progress, the chip is added to the top bar without rebuilding the page); a tap posts `SKIP_WAITING`, and the page reloads once the new worker is in control. The midwife chooses the moment: an open ward board is never swapped under her hands. The app looks for a release when it returns to the foreground and every hour, and Settings has "Check for updates".
+- **The sw-manifest test** (`test/sw-manifest.test.mjs`) fails when a file under `js/` or `css/` is missing from `SHELL` (a missing file makes `addAll` fail and silently leaves every tablet on the old release), when the entry points or icons are missing, or when `sw.js` or `package.json` drift from `js/version.js`.
+- **Cutting a release:** bump `js/version.js` and `package.json` together, add the CHANGELOG entry, `npm test` green, browser walk (including an offline reload and the update chip after the bump), review, merge, tag. Each milestone is one branch and one pull request with its CHANGELOG entry.
+- **Publication gates.** The repository stays private until milestone M6. Making it public and enabling GitHub Pages happen only on the owner's go; until then the app runs on localhost only. Nothing reaches the public URL, the v1 repository or any person without the owner's go.
+
+## 12. Testing
+
+`npm test` runs the `node:test` suite (Node 20 or later, no dependencies), one file per area under `test/`, against the pure modules:
+
+- **Rules:** each observation rule has a firing case and a silent case at its cut-off (`rules.test.mjs`), plus a guard that every rule can resolve or is deliberately sticky; time rules, both protocols, schedules and the postpartum watch.
+- **Engine and records:** the alert lifecycle, the record layer (void, correct, re-derivation, birth record history), the PPH trigger and its re-opening, migration and the restore matrix.
+- **Outputs:** audit windows and score, indicators with Robson groups and the CSV writer, chart SVG markers (X, O, P, circles, continuation sheets), wizard and view logic, FHIR bundle shape, the Ethiopian calendar, the stepper, and the sw-manifest guard.
+
+The screens are checked by browser walks of the demo case (M3, M4, and M6 before publication), and milestones M2 to M4 each had two independent clinical review passes. When a test fails, the implementation is fixed, not the test, unless the test itself is wrong.
