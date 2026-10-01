@@ -1,6 +1,19 @@
 # Changelog
 
-## 2.0.0 (release candidate, not yet published) - milestone M6, 1 October 2026
+## 2.0.1 - 1 October 2026
+
+- The repository moved to the Africa Digital Health Academy organisation
+  (https://github.com/africa-digital-health-academy/labour-care-guide), and
+  the app now runs at https://africa-digital-health-academy.github.io/labour-care-guide/:
+  a web origin of its own, so Parthograph v1 and the other apps on the
+  owner's account can no longer clear its offline copy (gap register S10).
+  The About screen links to the new home. Data entered at the first address
+  (drtemesgen.github.io, live for a few minutes) stays there; move it with a
+  backup and a restore.
+- Still a public preview: not for facility use before the clinical panel
+  review.
+
+## 2.0.0 - public preview, milestone M6, 1 October 2026
 
 Verification, review and release preparation. The version is 2.0.0; the
 tag, the public repository and GitHub Pages wait for the owner's go. Not for
