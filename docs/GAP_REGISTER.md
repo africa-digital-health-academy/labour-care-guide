@@ -72,6 +72,7 @@ Found by searching `js/` for the marker on 1 October 2026. They are placeholders
 | `js/protocol.js` LIMITS.audit.ackWithinMin | Acknowledgement counted as timely in the audit | 15 min |
 | `js/protocol.js` LIMITS.audit.weights | Audit section weights | baby, progress and alerts 2; the other sections 1 |
 | `js/audit.js` auditCase() | "LCG completed", behind the LCG-use indicator (IRP Table 3) | name and parity recorded, and at least one entry in each core section |
+| `js/protocol.js` LIMITS.fhrCloseMin | FHR interval while a thick-meconium, abnormal-FHR or deceleration alert is open (M6; also applied in the latent phase) | 15 min |
 
 ### 4.2 Choices recorded for the panel (not marked in the code)
 

@@ -8,7 +8,7 @@ This repository is version 2 of the project first published as [Parthograph](htt
 
 > **Status (1 October 2026): version 2 (2.0.1) is a public preview** at https://africa-digital-health-academy.github.io/labour-care-guide/ (published by the Africa Digital Health Academy) - for demonstration, training and review, **not for facility use** until the clinical panel has reviewed it (see [docs/GAP_REGISTER.md](docs/GAP_REGISTER.md), section 4). Milestones M0 to M6 are done: the test suite, two browser walks of the demo case, and two automated review passes, independent of the build, that checked every alert value and interval against the WHO texts. No clinician has reviewed it yet; that review is the next step. See [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md). The v1 application remains live at https://drtemesgen.github.io/parthograph/ and keeps working on installed tablets.
 
-> **Safety status: not for facility use.** Every clinical rule, and every value marked `PANEL-TO-CONFIRM` in the code, must first be reviewed by an Ethiopian obstetric and midwifery clinical panel, and any pilot needs approval by the responsible health authorities and supervision. Publishing v2.0.0 will not change this: facility use waits for the panel. This software is a decision-support and documentation aid for skilled birth attendants. It is not a certified medical device and does not replace clinical judgement, national protocols or senior consultation. It is not a WHO product and WHO does not endorse it (see [NOTICE-WHO.md](NOTICE-WHO.md)).
+> **Safety status: not for facility use.** Every clinical rule, and every value marked `PANEL-TO-CONFIRM` in the code, must first be reviewed by an Ethiopian obstetric and midwifery clinical panel, and any pilot needs approval by the responsible health authorities and supervision. Publishing version 2 did not change this: facility use waits for the panel. Medical disclaimer: this software is a decision-support and documentation aid for skilled birth attendants; it is not a certified medical device, it does not replace clinical judgement, national clinical protocols or consultation with senior clinicians, and deployment in patient care requires approval by the responsible health authorities. It is not a WHO product and WHO does not endorse it (see [NOTICE-WHO.md](NOTICE-WHO.md)).
 
 ## What it does
 
@@ -103,7 +103,7 @@ Summaries and links: [docs/RESEARCH.md](docs/RESEARCH.md).
 
 ## Get involved
 
-The project is looking for clinical reviewers (obstetrics, midwifery), translators (Amharic, Afaan Oromo, Tigrinya, Somali, Afar), pilot facilities and digital-health implementers. Clinical-content changes need a citation (WHO or MOH document and page). Comments on the suggestions to WHO are welcome as issues once the repository is public.
+The project is looking for clinical reviewers (obstetrics, midwifery), translators (Amharic, Afaan Oromo, Tigrinya, Somali, Afar), pilot facilities and digital-health implementers. Clinical-content changes need a citation (WHO or MOH document and page). Comments on the suggestions to WHO are welcome on the public comment issue: https://github.com/africa-digital-health-academy/labour-care-guide/issues/9.
 
 Contact: Dr Temesgen Endalew - [linkedin.com/in/dr-temesgen-endalew](https://www.linkedin.com/in/dr-temesgen-endalew/)
 

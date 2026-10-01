@@ -170,7 +170,7 @@ Suggestion. Maintain a public registry of national LCG adaptations: the adapted 
 
 ## What this repository offers back
 
-- A data dictionary for every LCG element and a FHIR R4 mapping with LOINC and SNOMED CT codes, under an open licence, as a starting point for suggestion 1.
+- A FHIR R4 mapping of every LCG element with LOINC and SNOMED CT codes (docs/FHIR_MAPPING.md), under an open licence, as a starting point for suggestion 1; a formal data dictionary is planned.
 - Computable versions of the package's six indicators and of the Annex 8 audit score, with test cases, as a starting point for suggestion 15.
 - Demonstration labours as machine-readable files, for suggestion 14.
 - Field feedback from Ethiopian health centres once piloting begins, for suggestions 3 to 11.
