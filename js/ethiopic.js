@@ -36,26 +36,47 @@ function jdnToEthiopic(jdn) {
   return { year, month, day };
 }
 
-/** Convert a JS Date (local time) to Ethiopian calendar date {year, month, day}. */
-export function toEthiopic(date) {
-  const jdn = gregorianToJDN(date.getFullYear(), date.getMonth() + 1, date.getDate());
-  return jdnToEthiopic(jdn);
+/** The Ethiopian date {year, month, day} of a Gregorian calendar day (month 1-12). No Date object, so no timezone. */
+export function gregorianToEthiopic(year, month, day) {
+  return jdnToEthiopic(gregorianToJDN(year, month, day));
 }
 
-/** Convert an Ethiopian calendar date to a JS Date (at local midnight). */
-export function fromEthiopic(year, month, day) {
+/** The Gregorian calendar day {year, month (1-12), day} of an Ethiopian date. No Date object, so no timezone. */
+export function ethiopicToGregorian(year, month, day) {
   const jdn = ethiopicToJDN(year, month, day);
-  // inverse of gregorianToJDN (Fliegel–Van Flandern)
+  // inverse of gregorianToJDN (Fliegel-Van Flandern)
   const a = jdn + 32044;
   const b = Math.floor((4 * a + 3) / 146097);
   const c = a - Math.floor(146097 * b / 4);
   const d = Math.floor((4 * c + 3) / 1461);
   const e = c - Math.floor(1461 * d / 4);
   const m = Math.floor((5 * e + 2) / 153);
-  const day_ = e - Math.floor((153 * m + 2) / 5) + 1;
-  const month_ = m + 3 - 12 * Math.floor(m / 10);
-  const year_ = 100 * b + d - 4800 + Math.floor(m / 10);
-  return new Date(year_, month_ - 1, day_);
+  return {
+    year: 100 * b + d - 4800 + Math.floor(m / 10),
+    month: m + 3 - 12 * Math.floor(m / 10),
+    day: e - Math.floor((153 * m + 2) / 5) + 1,
+  };
+}
+
+/**
+ * Days in an Ethiopian month: 30 in months 1-12; Pagume (13) has 5, or 6 in
+ * the year before a Gregorian leap year (year % 4 === 3, e.g. 2015 and 2019
+ * EC), when the next Meskerem 1 falls on 12 September instead of the 11th.
+ */
+export function ecMonthDays(year, month) {
+  if (month !== 13) return 30;
+  return year % 4 === 3 ? 6 : 5;
+}
+
+/** Convert a JS Date (local time) to Ethiopian calendar date {year, month, day}. */
+export function toEthiopic(date) {
+  return gregorianToEthiopic(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
+/** Convert an Ethiopian calendar date to a JS Date (at local midnight). */
+export function fromEthiopic(year, month, day) {
+  const g = ethiopicToGregorian(year, month, day);
+  return new Date(g.year, g.month - 1, g.day);
 }
 
 /** The era after an Ethiopian year: EC in English, Amete Mihret abbreviated in Amharic. */

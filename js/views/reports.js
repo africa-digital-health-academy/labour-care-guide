@@ -5,25 +5,33 @@
 // studies flag as the top complaint about digital tools.
 //
 // Counting rules and CSV rows live in indicators.js (S13); this file only
-// lays them out. The month on screen is kept in the link (#/reports/YYYY-MM),
-// so a data change that rebuilds the page keeps it, and the bottom navigation
+// lays them out. The month on screen is kept in the link (#/reports/2026-06
+// for a Gregorian month, #/reports/2019-01-EC for an Ethiopian one), so a
+// data change that rebuilds the page keeps it, and the bottom navigation
 // (#/reports) always opens the current month.
+//
+// M6, the owner's decision of 1 Oct 2026: a three-way calendar choice at the
+// top, remembered per device (S.settings.reportCalendar). Gregorian counts
+// Gregorian months and shows Gregorian dates only; Ethiopian counts Ethiopian
+// months (the HMIS period, Meskerem to Pagume) and shows Ethiopian dates
+// only; Both, the default, counts Ethiopian months and shows every date in
+// both calendars. The Settings choice "Show Ethiopian calendar dates" does
+// not apply here: this choice decides the Reports page.
 //
 // Screen text goes through t() (keys 'rp.*' in js/i18n/reports.js). The
 // exported files stay English: their column names and content are read by
 // machines (DHIS2 entry, spreadsheets), not by the midwife on this screen.
 
-import { h, toast, confirmDialog } from '../ui.js';
-import { t } from '../i18n.js';
-import { S, exportBackup, importBackup, initStore, emit } from '../store.js';
+import { h, toast, confirmDialog, field, segmented } from '../ui.js';
+import { t, getLang } from '../i18n.js';
+import { S, exportBackup, importBackup, initStore, emit, saveSettings } from '../store.js';
 import {
-  computeIndicators, hmisCounts, MONITORED_MIN_ENTRIES, indicatorExportRows, registerRows, robsonBreakdown,
-  toCSV, isDemo, monthOf, shiftMonth, monthRange, monthKey, parseMonthKey, ecMonthSpan, eatStamp,
+  computeIndicators, hmisCounts, MONITORED_MIN_ENTRIES, indicatorExportRows, registerExportRows, robsonBreakdown,
+  toCSV, isDemo, eatStamp, inRegisterPeriod, reportCalendar, periodCalendar, periodOf, shiftPeriod, periodRange,
+  periodKey, parsePeriodKey, periodIn, gregorianDays, exportPeriod,
 } from '../indicators.js';
+import { EC_MONTHS, EC_MONTHS_AM, ecEra } from '../ethiopic.js';
 import { LIMITS } from '../protocol.js';
-
-const MONTH_LINK = /^#\/reports\/(\d{4}-\d{2})$/;
-const order = m => m.year * 12 + m.month;
 
 // Robson Ten-Group Classification (WHO 2017): short readings of the groups
 // robsonGroup() assigns. Display text only; the rules are in indicators.js.
@@ -44,70 +52,145 @@ const ROBSON_LABEL = {
 };
 
 // Gregorian month names for the screen (indicators.js monthLabel() keeps the
-// English names the exports use).
+// English names the exports use). Ethiopian month names come from
+// ethiopic.js, in Amharic on an Amharic screen.
 const MONTH_NAME = [
   'rp.month_1', 'rp.month_2', 'rp.month_3', 'rp.month_4', 'rp.month_5', 'rp.month_6',
   'rp.month_7', 'rp.month_8', 'rp.month_9', 'rp.month_10', 'rp.month_11', 'rp.month_12',
 ];
-const monthText = (year, month) => `${t(MONTH_NAME[month - 1])} ${year}`;
+const gcName = month => t(MONTH_NAME[month - 1]);
+const ecName = month => (getLang() === 'am' ? EC_MONTHS_AM : EC_MONTHS)[month - 1];
+
+// the three calendar choices, in the order of the button
+const CALENDAR_CHOICES = [
+  { value: 'gregorian', label: 'rp.cal_gregorian' },
+  { value: 'both', label: 'rp.cal_both' },
+  { value: 'ethiopian', label: 'rp.cal_ethiopian' },
+];
 
 export function renderReports() {
   const now = new Date();
-  const current = monthOf(now);
-  const sel = selectedMonth(current);
-  const range = monthRange(sel.year, sel.month);
-  const label = monthText(sel.year, sel.month);
+  const mode = reportCalendar(S.settings);
+  const current = periodOf(periodCalendar(mode), now);
+  const sel = selectedPeriod(current);
+  const range = periodRange(sel);
 
   // counting rules live in indicators.js (S13): births by birth date,
-  // admissions by admission date, demo cases excluded
+  // admissions by admission date, demo cases excluded - in either calendar
   const ind = computeIndicators(S.patients, { ...range, settings: S.settings, now });
   const sm = hmisCounts(S.patients, range), sa = hmisCounts(S.patients);
 
   return h('div', { class: 'page' },
-    monthBar(sel, current),
-    indicatorCard(ind, label),
+    periodBar(sel, current, mode),
+    indicatorCard(ind, periodText(sel, mode)),
     h('p', { class: 'muted', style: 'margin:-6px 4px 14px' }, t('rp.device_only')),
-    hmisCard(sm, sa, label),
-    exportCard(sel),
+    hmisCard(sm, sa, periodLabel(sel, mode)),
+    exportCard(sel, mode),
   );
 }
 
-// ---------------------------------------------------------------- month ----
+// --------------------------------------------------------------- labels ----
 
-/** The month in the link, or the current month (also for a month still to come). */
-function selectedMonth(current) {
-  const m = MONTH_LINK.exec(location.hash);
-  const picked = m && parseMonthKey(m[1]);
+/** 'June 8 - July 7, 2026'; 'September 6 - 10, 2026' inside one month; both years across 1 January. */
+function gregorianSpan(p) {
+  const { first: a, last: b } = gregorianDays(p);
+  if (a.year !== b.year) return `${gcName(a.month)} ${a.day}, ${a.year} - ${gcName(b.month)} ${b.day}, ${b.year}`;
+  if (a.month !== b.month) return `${gcName(a.month)} ${a.day} - ${gcName(b.month)} ${b.day}, ${b.year}`;
+  return `${gcName(a.month)} ${a.day} - ${b.day}, ${b.year}`;
+}
+
+/**
+ * The screen label of a period, {main, sub}: 'June 2026' (Gregorian),
+ * 'Sene 2018 EC' (Ethiopian only), or 'Sene 2018 EC' over its Gregorian days
+ * 'June 8 - July 7, 2026' (Both). Month names and the era follow the screen
+ * language: an Amharic screen writes the Amharic month names and era.
+ */
+export function periodLabel(p, mode) {
+  if (p.cal !== 'ec') return { main: `${gcName(p.month)} ${p.year}`, sub: null };
+  return {
+    main: `${ecName(p.month)} ${p.year} ${ecEra(getLang())}`,
+    sub: mode === 'both' ? gregorianSpan(p) : null,
+  };
+}
+
+/** The label on one line, for sentences: 'Sene 2018 EC (June 8 - July 7, 2026)' in Both. */
+export function periodText(p, mode) {
+  const { main, sub } = periodLabel(p, mode);
+  return sub ? `${main} (${sub})` : main;
+}
+
+// --------------------------------------------------------------- period ----
+
+const REPORT_LINK = /^#\/reports\/([\w-]+)$/;
+// months of one calendar in order (13 to a year serves both calendars)
+const order = p => p.year * 13 + p.month;
+const same = (a, b) => a.cal === b.cal && order(a) === order(b);
+
+/**
+ * The month in the link, or the current month (also for a month still to
+ * come). A link in the other calendar - an old bookmark, or one from before
+ * the calendar was switched - shows the month holding its middle.
+ */
+function selectedPeriod(current) {
+  const m = REPORT_LINK.exec(location.hash);
+  const linked = m && parsePeriodKey(m[1]);
+  const picked = linked && periodIn(current.cal, linked);
   return picked && order(picked) <= order(current) ? picked : current;
 }
 
-function goMonth(ym, current) {
+function goPeriod(p, current) {
+  const link = same(p, current) ? '#/reports' : '#/reports/' + periodKey(p);
   // replace, not push: stepping through months must not fill the Back history
-  location.replace(order(ym) === order(current) ? '#/reports' : '#/reports/' + monthKey(ym.year, ym.month));
+  if (location.hash !== link) location.replace(link);
 }
 
-function monthBar(sel, current) {
-  const isCurrent = order(sel) === order(current);
-  const prev = shiftMonth(sel.year, sel.month, -1);
-  const next = shiftMonth(sel.year, sel.month, 1);
-  return h('div', { class: 'card', style: 'display:flex;align-items:center;gap:8px' },
-    h('button', {
-      class: 'btn secondary', title: t('rp.prev_month'), 'aria-label': t('rp.prev_month'),
-      onclick: () => goMonth(prev, current),
-    }, '<'),
-    h('div', { style: 'flex:1 1 auto;min-width:0;text-align:center' },
-      h('div', { style: 'font-weight:700;font-size:1.1rem' }, monthText(sel.year, sel.month)),
-      S.settings.ethiopianDates === false ? null
-        : h('div', { class: 'muted' }, ecMonthSpan(sel.year, sel.month, S.settings.lang)),
-      isCurrent ? null : h('button', {
-        class: 'btn ghost', style: 'min-height:40px;padding:4px 10px;font-size:.9rem',
-        onclick: () => goMonth(current, current),
-      }, t('rp.this_month')),
+/**
+ * A new report calendar. The choice is saved for this device, and the save
+ * rebuilds the page. This month stays this month; an earlier month moves to
+ * the month of the new calendar that holds its middle (June 2026 -> Sene
+ * 2018 EC), never past the current one.
+ */
+function setCalendar(mode, sel) {
+  if (mode === reportCalendar(S.settings)) return;
+  const now = new Date();
+  const current = periodOf(periodCalendar(mode), now);
+  const target = same(sel, periodOf(sel.cal, now)) ? current : periodIn(current.cal, sel);
+  // saveSettings() changes S.settings at once, so the link change below
+  // already renders the new calendar
+  saveSettings({ reportCalendar: mode }).catch(e => {
+    toast(t('rp.calendar_not_saved', { error: (e && e.message) || e }), 'danger');
+    emit(); // not remembered on the device, but this session shows the choice made
+  });
+  goPeriod(order(target) <= order(current) ? target : current, current);
+}
+
+function periodBar(sel, current, mode) {
+  const isCurrent = same(sel, current);
+  const prev = shiftPeriod(sel, -1);
+  const next = shiftPeriod(sel, 1);
+  const label = periodLabel(sel, mode);
+  return h('div', { class: 'card' },
+    field(t('rp.calendar'), segmented(
+      CALENDAR_CHOICES.map(c => ({ value: c.value, label: t(c.label) })), mode, v => setCalendar(v, sel))),
+    h('p', { class: 'muted', style: 'margin:-6px 0 10px' }, t('rp.calendar_note')),
+    h('div', { style: 'display:flex;align-items:center;gap:8px' },
+      h('button', {
+        class: 'btn secondary', title: t('rp.prev_month'), 'aria-label': t('rp.prev_month'),
+        onclick: () => goPeriod(prev, current),
+      }, '<'),
+      h('div', { style: 'flex:1 1 auto;min-width:0;text-align:center' },
+        h('div', { style: 'font-weight:700;font-size:1.1rem' }, label.main),
+        label.sub ? h('div', { class: 'muted' }, label.sub) : null,
+        isCurrent ? null : h('button', {
+          class: 'btn ghost', style: 'min-height:40px;padding:4px 10px;font-size:.9rem',
+          onclick: () => goPeriod(current, current),
+        }, t('rp.this_month')),
+      ),
+      h('button', {
+        class: 'btn secondary', title: t('rp.next_month'), 'aria-label': t('rp.next_month'), disabled: isCurrent,
+        onclick: () => goPeriod(next, current),
+      }, '>'),
     ),
-    h('button', {
-      class: 'btn secondary', title: t('rp.next_month'), 'aria-label': t('rp.next_month'), disabled: isCurrent,
-      onclick: () => goMonth(next, current),
-    }, '>'),
   );
 }
 
@@ -173,7 +256,11 @@ function hmisCard(sm, sa, label) {
     h('div', { style: 'overflow-x:auto' },
       h('table', { class: 'entries' },
         h('thead', null, h('tr', null,
-          h('th', null, t('rp.col_count')), h('th', { style: NUM }, label), h('th', { style: NUM }, t('rp.col_all_time')))),
+          h('th', null, t('rp.col_count')),
+          // in Both, the Gregorian days go under the Ethiopian month
+          h('th', { style: NUM }, label.main,
+            label.sub ? h('div', { class: 'muted', style: 'font-weight:400;font-size:.8rem' }, label.sub) : null),
+          h('th', { style: NUM }, t('rp.col_all_time')))),
         h('tbody', null,
           line(t('rp.hmis_admissions'), sm.admissions, sa.admissions),
           line(t('rp.hmis_births'), sm.births, sa.births),
@@ -192,16 +279,27 @@ function hmisCard(sm, sa, label) {
 
 // --------------------------------------------------------------- export ----
 
-function exportCard(sel) {
+/**
+ * Export file names. The indicator and register files carry their month
+ * (periodKey: 'lcg-register-2019-01-EC.csv'); the backup carries the East
+ * Africa Time date, so one taken at 01:00 in Addis Ababa is named after that
+ * day, not the UTC one. A file name never carries a patient's name.
+ */
+export function exportFileName(kind, { period = null, now = new Date() } = {}) {
+  if (kind === 'backup') return `lcg-backup-${eatStamp(now).slice(0, 10)}.json`;
+  return `lcg-${kind}-${periodKey(period)}.csv`;
+}
+
+function exportCard(sel, mode) {
   return h('div', { class: 'card' },
     h('h2', null, t('rp.export_title')),
     h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
-      h('button', { class: 'btn secondary', onclick: () => exportIndicators(sel) }, t('rp.export_ind')),
-      h('button', { class: 'btn secondary', onclick: exportRegister }, '⇩ ', t('rp.export_register')),
+      h('button', { class: 'btn secondary', onclick: () => exportIndicators(sel, mode) }, t('rp.export_ind')),
+      h('button', { class: 'btn secondary', onclick: () => exportRegister(sel, mode) }, '⇩ ', t('rp.export_register')),
       h('button', { class: 'btn secondary', onclick: backup }, '⇩ ', t('rp.export_backup')),
       h('button', { class: 'btn secondary', onclick: restore }, '⇧ ', t('rp.restore_backup')),
     ),
-    h('p', { class: 'muted' }, t('rp.export_note', { month: monthText(sel.year, sel.month) })),
+    h('p', { class: 'muted' }, t('rp.export_note', { month: periodText(sel, mode) })),
     h('p', { class: 'muted' }, t('rp.backup_warn')),
   );
 }
@@ -209,26 +307,25 @@ function exportCard(sel) {
 const csvBlob = rows => new Blob([toCSV(rows)], { type: 'text/csv;charset=utf-8' });
 const failed = e => toast(t('rp.export_failed', { error: (e && e.message) || e }), 'danger');
 
-function exportIndicators(sel) {
+function exportIndicators(sel, mode) {
   try {
-    const ind = computeIndicators(S.patients, { ...monthRange(sel.year, sel.month), settings: S.settings, now: new Date() });
-    const period = monthKey(sel.year, sel.month);
-    download(csvBlob(indicatorExportRows(ind, { period, facility: S.settings.facilityName || '' })),
-      `lcg-indicators-${period}.csv`);
-    toast(t('rp.ind_exported', { month: monthText(sel.year, sel.month) }));
+    const ind = computeIndicators(S.patients, { ...periodRange(sel), settings: S.settings, now: new Date() });
+    const { period, bounds } = exportPeriod(sel, mode);
+    download(csvBlob(indicatorExportRows(ind, { period, facility: S.settings.facilityName || '', bounds })),
+      exportFileName('indicators', { period: sel }));
+    toast(t('rp.ind_exported', { month: periodText(sel, mode) }));
   } catch (e) {
     failed(e);
   }
 }
 
-function exportRegister() {
+function exportRegister(sel, mode) {
   try {
-    const now = new Date();
-    const rows = registerRows(S.patients, S.settings, now);
-    const demo = S.patients.filter(isDemo).length;
-    // the date only: a file name never carries a patient's name
-    download(csvBlob(rows), `lcg-register-${eatStamp(now).slice(0, 10)}.csv`);
-    toast(t('rp.register_exported', { cases: cases(rows.length - 1) })
+    const range = periodRange(sel);
+    const rows = registerExportRows(S.patients, { range, ...exportPeriod(sel, mode), settings: S.settings, now: new Date() });
+    const demo = S.patients.filter(p => isDemo(p) && inRegisterPeriod(p, range)).length;
+    download(csvBlob(rows), exportFileName('register', { period: sel }));
+    toast(t('rp.register_exported', { month: periodText(sel, mode), cases: cases(rows.length - 1) })
       + (demo ? ' ' + t('rp.demo_left_out', { n: demo }) : ''));
   } catch (e) {
     failed(e);
@@ -236,10 +333,13 @@ function exportRegister() {
 }
 
 async function backup() {
-  const data = await exportBackup();
-  download(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
-    `lcg-backup-${new Date().toISOString().slice(0, 10)}.json`);
-  toast(t('rp.backup_done') + ' ✓');
+  try {
+    const data = await exportBackup();
+    download(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), exportFileName('backup'));
+    toast(t('rp.backup_done') + ' ✓');
+  } catch (e) {
+    failed(e);
+  }
 }
 
 function restore() {
