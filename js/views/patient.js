@@ -10,9 +10,12 @@
 //
 // Corrections are append-only (S5): an entry is voided or corrected with
 // initials and a reason, after a confirmation that states what will change -
-// labour stage, timers, alerts. Real cases are closed, never deleted; only
-// DEMO cases can be deleted. Every record made here carries initials (F3).
-// No clinical threshold lives here: the engine decides, this view reports.
+// labour stage, timers, alerts. Medication entries and the notes the midwife
+// writes are voided the same way (M6), from the Entries tab; a voided entry
+// stays listed, struck through, with who voided it, when and why. Real cases
+// are closed, never deleted; only DEMO cases can be deleted. Every record
+// made here carries initials (F3). No clinical threshold lives here: the
+// engine decides, this view reports.
 //
 // Language (M5): every string shown here goes through t() ('pt.' keys in
 // js/i18n/patient.js; the Amharic is a draft for clinical review). t() is
@@ -33,7 +36,9 @@ import {
   inPostpartumWatch, secondStagePushing, birthTime, babyWatched,
 } from '../protocol.js';
 import { EMERGENCIES, addAlerts, resolveAlert } from '../alerts.js';
-import { previewVoid, voidObservation, recordEvent } from '../record.js';
+import {
+  previewVoid, voidObservation, recordEvent, previewVoidMedication, voidMedication, voidNote, noteAction, EMERGENCY_NOTE,
+} from '../record.js';
 import { auditCase, isAckNote } from '../audit.js';
 import { isDemo } from '../indicators.js';
 import {
@@ -366,9 +371,16 @@ export function alertStrip(p) {
   return root;
 }
 
-/** Unacknowledged alerts: open ones most urgent first, and those already closed. */
-function waitingAlerts(p) {
-  const waiting = (p.alerts || []).filter(a => !a.ack && a.severity !== 'info');
+/** Nothing to acknowledge: acknowledged, or closed in the save that raised it (needsAck: false, record.js settle). */
+const settled = a => !!a.ack || a.needsAck === false;
+
+/**
+ * Unacknowledged alerts: open ones most urgent first, and those already
+ * closed. An alert closed in the save that raised it was never shown open
+ * and asks for nothing (needsAck: false). Pure: exported for the tests.
+ */
+export function waitingAlerts(p) {
+  const waiting = (p.alerts || []).filter(a => !settled(a) && a.severity !== 'info');
   return { open: waiting.filter(a => !a.resolved).sort(urgentFirst), closed: waiting.filter(a => a.resolved) };
 }
 
@@ -466,26 +478,50 @@ function obsSummary(o) {
 const newestFirst = (a, b) => String(b.time).localeCompare(String(a.time))
   || String(b.enteredAt || '').localeCompare(String(a.enteredAt || ''));
 
+/** " (5)" or " (5, 1 voided)": the entries that stand, and the voided ones kept with them. */
+function countText(list) {
+  const voided = list.filter(x => x.voided).length;
+  return ` (${list.length - voided}${voided ? ', ' + t('pt.n_voided', { n: voided }) : ''})`;
+}
+
+/**
+ * The notes the midwife wrote (assessment and plan), voided ones included:
+ * the notes the app writes with an acknowledgement, a referral or an
+ * emergency (record.js noteAction) stand with that record and are listed on
+ * the Summary tab only. Pure: exported for the tests.
+ */
+export function assessmentNotes(p) {
+  return (p.notes || []).filter(n => n && !noteAction(n));
+}
+
 function entriesTab(p) {
   const rows = (p.obs || []).slice().sort(newestFirst);
   const meds = (p.meds || []).slice().sort(newestFirst);
-  const voided = rows.filter(o => o.voided).length;
+  const notes = assessmentNotes(p).sort(newestFirst);
   return h('div', { class: 'card' },
-    h('h2', null, `${t('entries')} (${rows.length - voided}${voided ? ', ' + t('pt.n_voided', { n: voided }) : ''})`),
+    h('h2', null, t('entries') + countText(rows)),
     rows.length ? h('table', { class: 'entries' },
       h('thead', null, h('tr', null,
         h('th', null, t('pt.col_time')), h('th', null, t('pt.col_type')), h('th', null, t('pt.col_values')), h('th', null, ''))),
       h('tbody', null, rows.map(o => entryRow(p, o))),
     ) : h('p', { class: 'muted' }, t('pt.no_entries')),
-    meds.length ? [h('h3', null, t('pt.meds_title')), h('table', { class: 'entries' },
-      h('tbody', null, meds.map(m => h('tr', { class: m.voided ? 'voided' : null },
-        h('td', null, when(m.time)), h('td', null, label(MED_KIND, m.kind)),
-        h('td', null, [m.detail, m.oxyUL ? m.oxyUL + ' U/L' : null, m.oxyDrops ? t('pt.s_drops', { n: m.oxyDrops }) : null].filter(Boolean).join(' · ')),
-        h('td', null, h('span', { class: 'entry-by' }, m.by || '-')),
-      ))),
+    meds.length ? [h('h3', null, t('pt.meds_title') + countText(meds)), h('table', { class: 'entries' },
+      h('tbody', null, meds.map(m => medRow(p, m))),
     )] : null,
+    notes.length ? [h('h3', null, t('pt.notes_entries_title') + countText(notes)),
+      h('p', { class: 'muted', style: 'margin:0 0 6px' }, t('pt.notes_entries_help')),
+      h('table', { class: 'entries' }, h('tbody', null, notes.map(n => noteRow(p, n)))),
+    ] : null,
   );
 }
+
+/** "Voided 10:42 by TE: reason" under a voided entry (.entry-by is inline-block in a voided row, css: not struck through). */
+function voidLine(v) {
+  return h('div', null, h('span', { class: 'entry-by void-note' },
+    t('pt.voided_by', { time: when(v.at), by: v.by || '?', reason: v.reason || '' })));
+}
+
+const voidButton = onclick => h('button', { type: 'button', class: 'btn ghost', style: 'color:var(--c-danger)', onclick }, t('pt.void'));
 
 function entryRow(p, o) {
   const voided = !!o.voided;
@@ -498,16 +534,56 @@ function entryRow(p, o) {
       // initials sit under the values: a fifth column overflows a 360 px phone
       h('div', null, h('span', { class: 'entry-by' }, t('pt.by', { by: o.by || '-' }))),
       o.replaces ? h('div', { class: 'muted' }, t('pt.corrected_entry')) : null,
-      // .entry-by is inline-block in a voided row (css), so the reason is not struck through
-      voided ? h('div', null, h('span', { class: 'entry-by void-note' },
-        t('pt.voided_by', { by: o.voided.by || '?', reason: o.voided.reason }))) : null,
+      voided ? voidLine(o.voided) : null,
     ),
     h('td', null, voided ? null : h('span', { class: 'entry-actions' },
       // an event (pushing) has no values to correct: void it and record again
       WIZARD_TYPES.includes(o.type) && o.type !== 'event'
         ? h('button', { type: 'button', class: 'btn secondary', onclick: () => correctEntry(p, o) }, t('pt.correct')) : null,
-      h('button', { type: 'button', class: 'btn ghost', style: 'color:var(--c-danger)', onclick: () => voidEntry(p, o) }, t('pt.void')),
+      voidButton(() => voidEntry(p, o)),
     )),
+  );
+}
+
+/** A medication entry in one line: its detail, and for oxytocin the concentration and the rate. */
+function medSummary(m) {
+  return [m.detail, m.oxyUL ? m.oxyUL + ' U/L' : null, m.oxyDrops ? t('pt.s_drops', { n: m.oxyDrops }) : null]
+    .filter(Boolean).join(' · ');
+}
+
+/** One medication entry: like an observation row, initials under the values and Void in the last column. */
+function medRow(p, m) {
+  const voided = !!m.voided;
+  return h('tr', { class: voided ? 'voided' : null },
+    h('td', null, when(m.time)),
+    h('td', null, label(MED_KIND, m.kind)),
+    h('td', null,
+      medSummary(m),
+      h('div', null, h('span', { class: 'entry-by' }, t('pt.by', { by: m.by || '-' }))),
+      voided ? voidLine(m.voided) : null,
+    ),
+    h('td', null, voided || m.id == null ? null : h('span', { class: 'entry-actions' }, voidButton(() => voidMedEntry(p, m)))),
+  );
+}
+
+/**
+ * One note the midwife wrote: the assessment, the plan under it, then the
+ * initials and Void. The note is named for its void when the row is drawn
+ * (standingNote): a save that fails puts back a copy of the case, and a note
+ * saved without an id must still be found in it.
+ */
+function noteRow(p, n) {
+  const voided = !!n.voided;
+  const ref = { id: n.id ?? null, time: n.time, text: n.text, plan: n.plan };
+  return h('tr', { class: voided ? 'voided' : null },
+    h('td', null, when(n.time)),
+    h('td', null,
+      n.text ? h('div', null, n.text) : null,
+      n.plan ? h('div', { class: 'muted' }, t('pt.plan', { plan: n.plan })) : null,
+      h('div', null, h('span', { class: 'entry-by' }, t('pt.by', { by: n.by || '-' }))),
+      voided ? voidLine(n.voided) : null,
+    ),
+    h('td', null, voided ? null : h('span', { class: 'entry-actions' }, voidButton(() => voidNoteEntry(p, n, ref)))),
   );
 }
 
@@ -620,6 +696,88 @@ async function correctEntry(p, o) {
   openRecordWizard(p, [o.type], null, { prefill: { ...o.v }, time: o.time, replaces: o.id, reason: r.reason, by: r.by });
 }
 
+/**
+ * What voiding a medication entry changes, in plain words, from
+ * previewVoidMedication (nothing is written until the midwife confirms): the
+ * oxytocin infusion no longer shown as running, or running again (its checks
+ * follow), and the time limits the clock has reached by now, which the void
+ * shows in the same save. Pure: exported for the tests.
+ */
+export function medVoidLines(p, pv) {
+  const lines = [];
+  const oxy = pv.oxytocin || {};
+  if (oxy.before && !oxy.after) lines.push(t('pt.void_oxy_stops'));
+  if (!oxy.before && oxy.after) lines.push(t('pt.void_oxy_runs', { n: getProtocol(S.settings, p).oxytocinCheckMin }));
+  // alert titles come from the engine and stay English (not machine-translated)
+  for (const title of pv.resolved || []) lines.push(t('pt.void_alert_closes', { title }));
+  // no value of a medication entry raises an alert: what opens is a time limit the clock reached
+  for (const title of pv.added || []) lines.push(t('pt.void_alert_opens_clock', { title }));
+  if (!lines.length) lines.push(t('pt.void_no_change'));
+  return lines;
+}
+
+/** Void a medication entry (S5): the confirmation states what changes, initials and a reason are required. */
+async function voidMedEntry(p, m) {
+  let pv;
+  try {
+    pv = previewVoidMedication(p, m.id, S.settings);
+  } catch (err) {
+    toast(errText(err), 'danger');
+    return;
+  }
+  const kind = label(MED_KIND, m.kind) || t('pt.med_medicine');
+  const r = await promptDialog({
+    title: t('pt.void_med_title', { kind, time: when(m.time) }),
+    message: t('pt.void_med_message', { summary: medSummary(m) || kind }),
+    lines: medVoidLines(p, pv),
+    needReason: true, danger: true, by: getBy(), okLabel: t('pt.void_ok'),
+  });
+  if (!r) return;
+  const done = await commit(p, () => voidMedication(p, m.id, S.settings, { by: r.by, reason: r.reason }));
+  if (!done) return;
+  setBy(r.by);
+  toast(t('pt.voided_toast'));
+  const opened = (done.result.added || []).length;
+  if (!opened) return;
+  toast(opened === 1 ? t('pt.opened_one', { n: 1 }) : t('pt.opened_other', { n: opened }), 'danger');
+  // time limits the void's clock opened are acknowledged now, as after an entry
+  showAlertAckModal(p, done.result.added);
+}
+
+/**
+ * The note a Void button names, as it stands in the case now: by its id, or -
+ * a note saved without one (v1, the demo case) - by its time, text and plan.
+ * ref: {id, time, text, plan}, read from the note when the row was drawn, so
+ * it still finds the note after a failed save put the case back. null when
+ * no note matches. Pure: exported for the tests.
+ */
+export function standingNote(p, ref) {
+  const notes = (p.notes || []).filter(Boolean);
+  if (ref.id != null) return notes.find(n => n.id === ref.id) || null;
+  return notes.find(n => n.id == null && n.time === ref.time && n.text === ref.text && n.plan === ref.plan) || null;
+}
+
+/** Void a note the midwife wrote (S5): initials and a reason are required; the note stays, struck through. */
+async function voidNoteEntry(p, n, ref) {
+  const r = await promptDialog({
+    title: t('pt.void_note_title', { time: when(n.time) }),
+    message: t('pt.void_note_message'),
+    // the note itself, as written: its assessment, then its plan
+    lines: [n.text, n.plan ? t('pt.plan', { plan: n.plan }) : null].filter(Boolean),
+    needReason: true, danger: true, by: getBy(), okLabel: t('pt.void_ok'),
+  });
+  if (!r) return;
+  const done = await commit(p, () => {
+    const note = standingNote(p, ref);
+    // a note saved without an id (v1, the demo case) is given one with its void, in the same save
+    if (note && note.id == null) note.id = uid();
+    return voidNote(p, note ? note.id : null, { by: r.by, reason: r.reason });
+  });
+  if (!done) return;
+  setBy(r.by);
+  toast(t('pt.voided_toast'));
+}
+
 // -------------------------------------------------------------- alerts ----
 
 const HOW = () => ({
@@ -637,8 +795,9 @@ const ACTION = () => ({
 });
 
 function alertsTab(p) {
-  // open and unacknowledged first, then closed unacknowledged, open, closed
-  const rank = a => (a.ack ? 2 : 0) + (a.resolved ? 1 : 0);
+  // open and unacknowledged first, then closed unacknowledged, open, closed;
+  // one closed as it was recorded (needsAck: false) waits for nothing
+  const rank = a => (settled(a) ? 2 : 0) + (a.resolved ? 1 : 0);
   const list = (p.alerts || []).slice().sort((a, b) => rank(a) - rank(b) || String(b.time).localeCompare(String(a.time)));
   const wrap = h('div');
   if (!list.length) wrap.append(h('div', { class: 'empty-state' }, h('div', { class: 'ico' }, '✅'), h('p', null, t('pt.no_alerts'))));
@@ -677,9 +836,13 @@ function alertStatus(p, a) {
     + (a.resolveReason ? ` - ${a.resolveReason}` : '');
 }
 
-/** Acknowledged when, by whom, with which action; or not yet. */
-function ackStatus(a) {
-  if (!a.ack) return t('pt.alert_not_acked');
+/**
+ * Acknowledged when, by whom, with which action; not needed for an alert
+ * closed as it was recorded after labour had ended (needsAck: false); or not
+ * yet. Pure: exported for the tests.
+ */
+export function ackStatus(a) {
+  if (!a.ack) return a.needsAck === false ? t('pt.alert_no_ack') : t('pt.alert_not_acked');
   const time = when(a.actionTime);
   return (a.ackBy ? t('pt.alert_acked_by', { time, by: a.ackBy }) : t('pt.alert_acked', { time }))
     + (a.action ? ` - ${ACTION()[a.action] || a.action}` : '');
@@ -691,7 +854,7 @@ function alertItem(p, a) {
     a.count > 1 ? t('pt.alert_seen', { n: a.count }) : null,
     raiser ? t('pt.alert_raised_by', { by: raiser }) : null].filter(Boolean).join(' - ');
   const buttons = [
-    a.ack ? null : h('button', {
+    settled(a) ? null : h('button', {
       class: 'btn secondary', onclick: () => { if (a.ack) toast(t('pt.already_acked')); else showAlertAckModal(p, [a]); },
     }, t('pt.acknowledge')),
     a.resolved ? null : h('button', { class: 'btn ghost', onclick: () => resolveFlow(p, a) }, t('pt.resolve')),
@@ -766,8 +929,9 @@ export function openEmergencyModal(p) {
               const added = addAlerts(p, [{ code: 'emg_' + e.code, severity: 'danger', title: 'EMERGENCY: ' + e.label, advice: e.advice }],
                 'manual', { time: at, raisedAt: at });
               for (const a of added) if (!a.by) a.by = by;
+              // the opening words come from record.js, which knows this note by them (noteAction)
               p.notes = [...(p.notes || []),
-                { id: uid(), time: at, by, text: 'Emergency declared: ' + e.label, plan: 'emergency management + referral assessment' }];
+                { id: uid(), time: at, by, text: EMERGENCY_NOTE + e.label, plan: 'emergency management + referral assessment' }];
             });
             if (!done) {
               busy = false;
@@ -795,16 +959,24 @@ function summaryTab(p, now) {
     auditCard(p, now),
     h('div', { class: 'card' },
       h('h2', null, t('pt.notes_title')),
-      (p.notes || []).slice().sort((a, b) => String(b.time).localeCompare(String(a.time))).map(n =>
-        h('div', { style: 'border-bottom:1px solid var(--c-line);padding:8px 0' },
-          h('p', { class: 'muted', style: 'margin:0;font-size:.8rem' }, fmtDT(n.time) + (n.by ? ' - ' + t('pt.by', { by: n.by }) : '')),
-          n.text ? h('p', { style: 'margin:2px 0' }, n.text) : null,
-          // an acknowledgement note stores its action as a code: show it in words
-          n.plan ? h('p', { class: 'muted', style: 'margin:0' }, t('pt.plan', { plan: (isAckNote(n) && ACTION()[n.plan]) || n.plan })) : null,
-        )),
+      (p.notes || []).slice().sort((a, b) => String(b.time).localeCompare(String(a.time))).map(summaryNote),
       noteForm(p),
     ),
     caseActions(p),
+  );
+}
+
+const STRUCK = ';text-decoration:line-through;color:var(--c-ink-soft)';
+
+/** One note of the Summary tab; a voided note stays listed, struck through, with who voided it, when and why. */
+function summaryNote(n) {
+  const struck = n.voided ? STRUCK : '';
+  return h('div', { style: 'border-bottom:1px solid var(--c-line);padding:8px 0' },
+    h('p', { class: 'muted', style: 'margin:0;font-size:.8rem' }, fmtDT(n.time) + (n.by ? ' - ' + t('pt.by', { by: n.by }) : '')),
+    n.text ? h('p', { style: 'margin:2px 0' + struck }, n.text) : null,
+    // an acknowledgement note stores its action as a code: show it in words
+    n.plan ? h('p', { class: 'muted', style: 'margin:0' + struck }, t('pt.plan', { plan: (isAckNote(n) && ACTION()[n.plan]) || n.plan })) : null,
+    n.voided ? voidLine(n.voided) : null,
   );
 }
 

@@ -18,14 +18,22 @@
 // stage start or changes an exam, the entries it affects are judged again for
 // the stage-gated rules (restage), so their flags, their alerts and the chart
 // circles drawn from both stay in step.
+//
+// Medication entries and notes are voided the same way (M6): kept, struck
+// through, with initials and a reason. Voiding an oxytocin record re-derives
+// whether the infusion runs. Once labour has ended on this device - the birth,
+// or her departure on referral - no labour finding stays open: they close at
+// that end, also when a later void re-opens one (closeAfterLabour).
 
 import {
   getProtocol, deriveStage, stageSnapshot, toMs, activeObs, byTime, birthTime, isLabouring, monitoringStage,
+  isOxytocinStop,
 } from './protocol.js';
 import {
   evaluateObs, addAlerts, reconcileAlerts, birthAlerts, closeTimeAlerts, resolveWhere, reopenWhere,
   unlinkObservation, refreshTimeAlerts, LABOUR_ONLY,
 } from './alerts.js';
+import { isAckNote } from './audit.js';
 import { CASE_SCHEMA } from './migrate.js';
 import { uid } from './db.js';
 
@@ -143,16 +151,26 @@ const earliest = times => (times.length ? times.reduce((a, b) => (toMs(a) <= toM
 const readsProgress = o => !!o && o.type === 'exam' && !!o.v && o.v.dilatation != null;
 
 /**
- * When and how labour monitoring ended on this device: {at, how} at the birth
- * ('birth') or her departure on referral ('handover'), whichever came first;
- * null while she is in labour.
+ * The ends of labour monitoring on this device, earliest first: {at, how} at
+ * the birth ('birth') and at her departure on referral ('handover'); none
+ * while she is in labour.
  */
-function labourEnd(p) {
-  if (isLabouring(p)) return null;
-  const ends = [{ at: birthTime(p), how: 'birth' }, { at: p.referral && p.referral.handoverAt, how: 'handover' }]
-    .filter(e => validTime(e.at));
-  return ends.length ? ends.reduce((a, b) => (toMs(a.at) <= toMs(b.at) ? a : b)) : null;
+function labourEnds(p) {
+  if (isLabouring(p)) return [];
+  return [{ at: birthTime(p), how: 'birth' }, { at: p.referral && p.referral.handoverAt, how: 'handover' }]
+    .filter(e => validTime(e.at)).sort((a, b) => toMs(a.at) - toMs(b.at));
 }
+
+/** When and how labour monitoring ended on this device: the first end, or null while she is in labour. */
+const labourEnd = p => labourEnds(p)[0] || null;
+
+/**
+ * The end a labour finding made at time t closes at, once labour has ended:
+ * the first end after t - the birth, or her departure when she left after
+ * it. null while she is in labour, and for a finding after every end (an
+ * oxytocin check after the birth while she is still here), which stands.
+ */
+const endAfter = (p, t) => labourEnds(p).find(e => toMs(t) < toMs(e.at)) || null;
 
 /**
  * The stage an entry made at time t is judged in: the labour stage at t; from
@@ -165,21 +183,66 @@ function stageThen(p, snap, t) {
 }
 
 /**
+ * The acknowledgement state of the open alerts just before an entry raises its
+ * own, for settle: an alert the entry joins and asks again (or raises in
+ * severity) gets it back when settle closes that alert in the same save.
+ */
+const askState = p => new Map((p.alerts || []).filter(a => !a.resolved)
+  .map(a => [a, { ack: a.ack, reAlertedAt: a.reAlertedAt, escalatedAt: a.escalatedAt }]));
+
+/** Put back an alert's acknowledgement state from askState. */
+function restoreAsk(a, was) {
+  a.ack = was.ack;
+  for (const k of ['reAlertedAt', 'escalatedAt']) {
+    if (was[k] === undefined) delete a[k];
+    else a[k] = was[k];
+  }
+}
+
+/**
  * The alerts an entry has just raised (new, escalated or asked again), sorted
  * for after labour: when labour has ended on this device and the entry is
- * timed before that end - a back-timed entry, a correction, an entry judged
+ * timed before an end - a back-timed entry, a correction, an entry judged
  * again - a labour finding has nothing left to act on, so it is closed at the
- * birth or departure (as applyBirth closes the open ones) and not returned for
- * acknowledgement. The entry keeps its flags: the chart still circles the
- * value as it stood. Maternal findings stay open into the postpartum watch.
- * Returns {added, resolved}.
+ * first end after the entry, the birth or her departure (as applyBirth and the
+ * departure close the open ones), and not returned for acknowledgement. The
+ * entry keeps its flags: the chart still circles the value as it stood.
+ * Closed in the save that raised it, the alert was never shown open, so it
+ * never asks for acknowledgement: a new one is marked needsAck: false (the
+ * alert strip and the acknowledgement dialog skip it), and one the entry
+ * joined keeps the acknowledgement state it had before (`asked`, askState),
+ * so an alert acknowledged earlier is not asked again. Maternal findings stay
+ * open into the postpartum watch. Returns {added, resolved}.
  */
-function settle(p, o, alerts) {
-  const end = labourEnd(p);
-  const over = a => !!end && LABOUR_ONLY.includes(a.code) && !a.resolved && toMs(o.time) < toMs(end.at);
+function settle(p, o, alerts, asked) {
+  const end = endAfter(p, o.time);
+  const over = a => !!end && LABOUR_ONLY.includes(a.code) && !a.resolved;
   const added = alerts.filter(a => !over(a));
-  const resolved = alerts.filter(over).flatMap(a => resolveWhere(p, x => x === a, end.at, end.how));
+  const resolved = [];
+  for (const a of alerts.filter(over)) {
+    resolved.push(...resolveWhere(p, x => x === a, end.at, end.how));
+    if (asked.has(a)) restoreAsk(a, asked.get(a));
+    else a.needsAck = false;
+  }
   return { added, resolved };
+}
+
+/**
+ * Once labour has ended on this device, a labour finding still open from
+ * before an end closes at the first end after its last finding (endAfter), as
+ * the birth and the departure close the others. A void can re-open one - the
+ * entry that had cleared it is gone - and a woman no longer in labour keeps no
+ * open labour alert. A finding after every end stands. Returns the alerts it
+ * closed.
+ */
+function closeAfterLabour(p) {
+  const closed = [];
+  for (const a of p.alerts || []) {
+    if (a.resolved || a.source !== 'obs' || !LABOUR_ONLY.includes(a.code)) continue;
+    const end = endAfter(p, a.lastSeen || a.time);
+    if (end) closed.push(...resolveWhere(p, x => x === a, end.at, end.how));
+  }
+  return closed;
 }
 
 /**
@@ -256,7 +319,8 @@ function restage(p, settings, before, { at, by = null, skip = [], from = null })
     o.flags = [...o.flags.filter(c => !gate.codes.includes(c)), ...drafts.map(d => d.code)];
     for (const code of had.filter(c => !drafts.some(d => d.code === c))) out.resolved.push(...letGo(p, o, code, at, by));
     for (const d of drafts.filter(x => !had.includes(x.code))) {
-      const s = settle(p, o, raise(p, o, d, at));
+      const asked = askState(p);
+      const s = settle(p, o, raise(p, o, d, at), asked);
       out.added.push(...s.added);
       out.resolved.push(...s.resolved);
     }
@@ -310,7 +374,8 @@ function recordRound(p, timeISO, values, settings, opts, restaging) {
   for (const o of created) {
     const drafts = judge(p, o, settings, snap);
     o.flags = drafts.map(d => d.code);
-    const s = settle(p, o, addAlerts(p, drafts, 'obs', { time: o.time, obsId: o.id, raisedAt: enteredAt }));
+    const asked = askState(p);
+    const s = settle(p, o, addAlerts(p, drafts, 'obs', { time: o.time, obsId: o.id, raisedAt: enteredAt }), asked);
     added.push(...s.added);
     closed.push(...s.resolved);
   }
@@ -329,7 +394,10 @@ function recordRound(p, timeISO, values, settings, opts, restaging) {
  * re-derived, and the entries the void affects are judged again (restage):
  * those it moved across a stage-gated rule and, for a voided exam, the exams
  * after it. The time rules then run at the void time (timeRules), so the
- * time alerts follow in the same save. opts.at: the void time, default now.
+ * time alerts follow in the same save. After the birth or her departure, a
+ * labour finding the void re-opened closes again at that end
+ * (closeAfterLabour), so it is listed as resolved, not re-opened.
+ * opts.at: the void time, default now.
  * Returns {entry, before, after, transitions, resolved, reopened, added,
  * addedByClock} - added: alerts the entries judged again or the time rules
  * now raise; addedByClock: the titles of those the time rules opened (a time
@@ -357,10 +425,11 @@ function voidEntry(p, obsId, settings, { by = null, reason = '', at } = {}, rest
   const re = restaging ? restage(p, settings, before, { at: when, by, from: readsProgress(o) ? o.time : null }) : NONE;
   const cleared = reconcileAlerts(p, settings);
   const tick = restaging ? timeRules(p, settings, when) : NONE;
+  const ended = restaging ? closeAfterLabour(p) : [];
   const after = stageSnapshot(p);
   return {
     entry: o, before, after, transitions: transitions(before, after),
-    resolved: [...resolved, ...re.resolved, ...cleared, ...tick.resolved],
+    resolved: [...resolved, ...re.resolved, ...cleared, ...tick.resolved, ...ended],
     reopened: reopened.filter(a => !a.resolved), added: [...re.added, ...tick.added], addedByClock: titles(tick.added),
   };
 }
@@ -422,8 +491,11 @@ function mirrorAdmission(p, type, v) {
  * after each half, a correction that leaves the stage where it was would
  * close their alerts and then open new, unacknowledged ones. The time rules
  * run once at its end, in the same save; addedByClock holds the titles of the
- * alerts they opened. opts: by, reason, time (the corrected observation time,
- * default the old one), at (when the correction is made, default now).
+ * alerts they opened. After the birth or her departure, a labour finding the
+ * void half re-opened and the corrected values did not clear closes again at
+ * that end (closeAfterLabour). opts: by, reason, time (the corrected
+ * observation time, default the old one), at (when the correction is made,
+ * default now).
  */
 export function correctObservation(p, obsId, newValues, settings, { by = null, reason = 'Corrected entry', time, at } = {}) {
   const old = (p.obs || []).find(x => x.id === obsId);
@@ -440,11 +512,13 @@ export function correctObservation(p, obsId, newValues, settings, { by = null, r
   const re = restage(p, settings, before, { at: when, by, skip: applied.obs, from });
   const cleared = reconcileAlerts(p, settings);
   const tick = timeRules(p, settings, when);
+  const ended = closeAfterLabour(p);
   // the net stage change of the whole correction: the void half alone would
   // report a reversion, the re-entry half alone nothing
   return {
-    voided, ...applied, added: [...applied.added, ...re.added, ...tick.added], addedByClock: titles(tick.added),
-    resolved: [...applied.resolved, ...re.resolved, ...cleared, ...tick.resolved],
+    voided: { ...voided, reopened: voided.reopened.filter(a => !a.resolved) }, ...applied,
+    added: [...applied.added, ...re.added, ...tick.added], addedByClock: titles(tick.added),
+    resolved: [...applied.resolved, ...re.resolved, ...cleared, ...tick.resolved, ...ended],
     transitions: transitions(before, stageSnapshot(p)),
   };
 }
@@ -452,7 +526,11 @@ export function correctObservation(p, obsId, newValues, settings, { by = null, r
 /**
  * Events. 'pushing': the form's P - starts the WHO second-stage clock (F2).
  * 'handover': the referred woman has left with her escort - monitoring on
- * this device stops (S8).
+ * this device stops (S8): her labour clocks stop (the time alerts close) and
+ * her open labour findings (LABOUR_ONLY) close at the departure time, as
+ * applyBirth closes them at the birth, since she is no longer here to act on
+ * them. Maternal findings (pulse, BP, temperature, urine) stay as they are.
+ * A departure is recorded once and is not voided.
  */
 export function recordEvent(p, kind, timeISO, settings, { by = null } = {}) {
   if (!validTime(timeISO)) throw new Error('A valid time is required');
@@ -464,10 +542,22 @@ export function recordEvent(p, kind, timeISO, settings, { by = null } = {}) {
     if (!p.referral) throw new Error('No referral is recorded for this case');
     if (p.referral.handoverAt) throw new Error('The handover is already recorded');
     p.referral = { ...p.referral, handoverAt: timeISO, handoverBy: by };
-    return { handoverAt: timeISO, resolved: closeTimeAlerts(p, timeISO, 'handover') };
+    const resolved = [
+      ...closeTimeAlerts(p, timeISO, 'handover'),
+      ...resolveWhere(p, a => a.source === 'obs' && LABOUR_ONLY.includes(a.code), timeISO, 'handover'),
+    ];
+    return { handoverAt: timeISO, resolved };
   }
   throw new Error('Unknown event: ' + kind);
 }
+
+// The opening words of the notes the app writes with a referral and with a
+// declared emergency (views/patient.js), by which noteAction knows them. The
+// referral note's plan is written in words, as the summary and the chart's
+// plan row show it (v1 and M2-M5 stored the code 'referral').
+const REFERRAL_NOTE = 'REFERRED to ';
+const REFERRAL_PLAN = 'Referred - see the referral note';
+export const EMERGENCY_NOTE = 'Emergency declared: ';
 
 /**
  * Record a referral. handoverAt is written as null - "not yet left" - so she
@@ -481,7 +571,7 @@ export function applyReferral(p, referral, { by = null } = {}) {
   p.status = 'referred';
   const reasons = (referral.reasons || []).join(', ');
   p.notes = [...(p.notes || []),
-    { id: uid(), time: referral.time, by, text: `REFERRED to ${referral.facility || 'hospital'}: ${reasons}`, plan: 'referral' }];
+    { id: uid(), time: referral.time, by, text: `${REFERRAL_NOTE}${referral.facility || 'hospital'}: ${reasons}`, plan: REFERRAL_PLAN }];
   return p.referral;
 }
 
@@ -506,7 +596,11 @@ export function applyBirth(p, delivery, newborn, settings, { by = null, enteredA
 
 /**
  * Void a birth record: it moves to deliveryHistory with author and reason,
- * the alerts it raised resolve, and the labour stage is re-derived.
+ * the alerts it raised resolve, and the labour stage is re-derived. A
+ * referred woman stays referred: monitored in labour until her departure is
+ * recorded (S8), and gone once it is - a woman who has left never comes back
+ * onto the ward board, and the labour findings the birth had closed close at
+ * her departure instead (closeAfterLabour).
  */
 export function voidDelivery(p, settings, { by = null, reason = '', at } = {}) {
   if (!p.delivery) throw new Error('No birth record to void');
@@ -520,8 +614,114 @@ export function voidDelivery(p, settings, { by = null, reason = '', at } = {}) {
   const resolved = resolveWhere(p, a => a.source === 'birth', when, 'void', by);
   // labour findings the birth had closed apply again (time rules re-fire on the tick)
   const reopened = reopenWhere(p, a => a.resolvedHow === 'birth' && a.source !== 'time');
-  p.status = p.referral && !p.referral.handoverAt ? 'referred' : 'latent';
+  p.status = p.referral ? 'referred' : 'latent';
   deriveStage(p, getProtocol(settings, p));
   reconcileAlerts(p, settings);
-  return { status: p.status, resolved, reopened };
+  const ended = closeAfterLabour(p);
+  return { status: p.status, resolved: [...resolved, ...ended], reopened: reopened.filter(a => !a.resolved) };
+}
+
+// ------------------------------------------------- medication and notes ----
+
+/**
+ * Whether the oxytocin infusion runs, read from the oxytocin medication
+ * records that stand: the latest by time decides - a start or a rate keeps it
+ * running, a stop ends it - and of two at the same time the one entered
+ * later. False when none stands.
+ */
+export function oxytocinRunningFrom(p) {
+  const last = (p.meds || []).filter(m => m && !m.voided && m.kind === 'oxytocin').sort(byTime).pop();
+  return !!last && !isOxytocinStop(last);
+}
+
+/** The entry of `list` with this id that stands; an unknown or voided id is refused. */
+function standingEntry(list, id, what) {
+  const e = id == null ? null : (list || []).find(x => x && x.id === id);
+  if (!e) throw new Error(`${what} not found`);
+  if (e.voided) throw new Error(`This ${what.toLowerCase()} is already voided`);
+  return e;
+}
+
+/** The voided stamp {at, by, reason}; a reason and initials are required. */
+function voidStamp(by, reason, at, what) {
+  const why = String(reason || '').trim();
+  if (!why) throw new Error(`A reason is required to void ${what}`);
+  const who = String(by || '').trim();
+  if (!who) throw new Error(`Initials are required to void ${what}`);
+  return { at: at || nowISO(), by: who, reason: why };
+}
+
+/**
+ * Void a medication entry (append-only, S5): a medicine, IV fluid or oxytocin
+ * record made in error, so that a drug never given stops showing as given.
+ * Like a voided observation it keeps its values and gains voided: {at, by,
+ * reason}; a reason and initials are required, and an unknown or already
+ * voided id is refused. The chart, the print appendix, the referral note and
+ * the audit leave it out; the FHIR export sends it as entered-in-error.
+ * Voiding an oxytocin record re-derives whether the infusion runs
+ * (oxytocinRunningFrom), which the oxytocin due chip and "Record now" follow;
+ * the time rules then run at the void time, in the same save, as after
+ * voidObservation. opts: by, reason, at (the void time, default now).
+ * Returns {entry, oxytocin: {before, after}, added, resolved, addedByClock}.
+ */
+export function voidMedication(p, medId, settings, { by = null, reason = '', at } = {}) {
+  const m = standingEntry(p.meds, medId, 'Medication entry');
+  const stamp = voidStamp(by, reason, at, 'a medication entry');
+  const before = !!p.oxytocinRunning;
+  m.voided = stamp;
+  if (m.kind === 'oxytocin') p.oxytocinRunning = oxytocinRunningFrom(p);
+  const tick = timeRules(p, settings, stamp.at);
+  return {
+    entry: m, oxytocin: { before, after: !!p.oxytocinRunning },
+    added: tick.added, resolved: tick.resolved, addedByClock: titles(tick.added),
+  };
+}
+
+/**
+ * What voiding a medication entry would change, without changing anything -
+ * for the confirm dialog: the same void run on a copy (opts.at: the void
+ * time, default now). Returns {oxytocin: {before, after}, resolved, added,
+ * addedByClock} with alert titles.
+ */
+export function previewVoidMedication(p, medId, settings, opts = {}) {
+  const r = voidMedication(structuredClone(p), medId, settings, { by: 'preview', reason: 'preview', ...opts });
+  return { oxytocin: r.oxytocin, resolved: titles(r.resolved), added: titles(r.added), addedByClock: r.addedByClock };
+}
+
+// What each note the app writes stands for, in the refusal of its void.
+const ACTION_NOTE = { ack: 'an alert acknowledgement', referral: 'the referral', emergency: 'a declared emergency' };
+
+/**
+ * 'ack', 'referral' or 'emergency' for a note the app writes as the record of
+ * that action - an alert acknowledgement (the alert keeps the action, its time
+ * and initials), a referral (p.referral) or a declared emergency (its alert) -
+ * null for a note the midwife wrote (assessment and plan). Notes saved without
+ * a kind are known by their fixed opening words. Pure.
+ */
+export function noteAction(n) {
+  if (!n) return null;
+  if (isAckNote(n)) return 'ack';
+  const text = String(n.text || '');
+  if ((n.plan === REFERRAL_PLAN || n.plan === 'referral') && text.startsWith(REFERRAL_NOTE)) return 'referral';
+  if (text.startsWith(EMERGENCY_NOTE)) return 'emergency';
+  return null;
+}
+
+/**
+ * Void a note (append-only, S5): an assessment or plan written in error, for
+ * example on another woman's case. It keeps its text and gains voided: {at,
+ * by, reason}; a reason and initials are required, and an unknown or already
+ * voided id is refused. The chart's assessment and plan rows, the print
+ * appendix and the audit leave it out. A note the app wrote with another
+ * action (noteAction) is refused: voiding it would hide that action from the
+ * chart while the action itself stands - the alert stays acknowledged, the
+ * referral recorded. A note changes no stage and no alert, so no rule runs.
+ * opts: by, reason, at (the void time, default now). Returns {entry}.
+ */
+export function voidNote(p, noteId, { by = null, reason = '', at } = {}) {
+  const n = standingEntry(p.notes, noteId, 'Note');
+  const action = noteAction(n);
+  if (action) throw new Error(`This note is the record of ${ACTION_NOTE[action]} and cannot be voided`);
+  n.voided = voidStamp(by, reason, at, 'a note');
+  return { entry: n };
 }

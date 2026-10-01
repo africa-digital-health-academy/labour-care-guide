@@ -172,10 +172,15 @@ const STRINGS = {
   'pt.col_values': ['Values', 'ውጤቶች'],
   'pt.no_entries': ['No entries yet.', 'እስካሁን ምንም መዝገብ የለም።'],
   'pt.meds_title': ['Medication / fluids', 'መድኃኒት / ፈሳሾች'],
+  'pt.notes_entries_title': ['Notes - assessment and plan', 'ማስታወሻዎች - ግምገማ እና ዕቅድ'],
+  'pt.notes_entries_help': [
+    'Acknowledgement, referral and emergency notes stay with their record; every note is on the Summary tab.',
+    'የዕውቅና፣ የሪፈራል እና የድንገተኛ ሁኔታ ማስታወሻዎች ከመዝገባቸው ጋር ይቆያሉ፤ ሁሉም ማስታወሻዎች በማጠቃለያ ገጽ ላይ አሉ።',
+  ],
   'pt.at_admission': ['admission', 'በምዝገባ ጊዜ'],
   'pt.by': ['by {by}', 'በ{by}'],
   'pt.corrected_entry': ['Corrected entry', 'የተስተካከለ መዝገብ'],
-  'pt.voided_by': ['Voided by {by}: {reason}', 'በ{by} ውድቅ ተደርጓል: {reason}'],
+  'pt.voided_by': ['Voided {time} by {by}: {reason}', '{time} ላይ በ{by} ውድቅ ተደርጓል: {reason}'],
   'pt.correct': ['Correct', 'አስተካክል'],
   'pt.void': ['Void', 'ውድቅ አድርግ'],
 
@@ -238,6 +243,31 @@ const STRINGS = {
     'ከዚያ የተስተካከሉት ውጤቶች እንደገና ይፈተሻሉ፤ ስለዚህ ምዕራፍ ወይም ማስጠንቀቂያ ተመልሶ ሊመጣ ይችላል።',
   ],
   'pt.correct_ok': ['Enter corrected values', 'የተስተካከሉ ውጤቶችን አስገባ'],
+  // medication and notes (M6): voided the same way, kept struck through
+  'pt.void_med_title': ['Void medication: {kind} at {time}', 'የመድኃኒት መዝገብ ውድቅ ማድረግ: {kind} ({time})'],
+  'pt.void_med_message': [
+    '{summary}. The entry stays on the record, struck through, with your initials and the reason, and is no longer'
+      + ' shown as given: not on the chart, the printout, the referral note or the audit; the FHIR export marks it'
+      + ' entered in error. What changes:',
+    '{summary}። መዝገቡ በመስመር ተሰርዞ ከስምህ መጀመሪያ ፊደላት እና ከምክንያቱ ጋር በፋይሉ ውስጥ ይቆያል፤ ከእንግዲህ እንደተሰጠ'
+      + ' አይታይም፦ በቻርቱ፣ በህትመቱ፣ በሪፈራል ማስታወሻው ወይም በኦዲቱ ላይ አይገኝም፤ የFHIR ኤክስፖርቱም በስህተት የገባ'
+      + ' ብሎ ይመዘግበዋል። የሚለወጠው፦',
+  ],
+  'pt.void_oxy_stops': [
+    'Oxytocin will no longer be shown as running: its checks stop falling due.',
+    'ኦክሲቶሲን እየተሰጠ እንዳለ ከእንግዲህ አይታይም፦ የኦክሲቶሲን ፍተሻዎቹ ከእንግዲህ አይጠየቁም።',
+  ],
+  'pt.void_oxy_runs': [
+    'Oxytocin will be shown as running again: a check falls due every {n} min.',
+    'ኦክሲቶሲን እንደገና እየተሰጠ እንዳለ ይታያል፦ በየ{n} ደቂቃው ፍተሻ ይጠየቃል።',
+  ],
+  'pt.void_note_title': ['Void note: {time}', 'ማስታወሻ ውድቅ ማድረግ: {time}'],
+  'pt.void_note_message': [
+    'The note stays on the record, struck through, with your initials and the reason.'
+      + ' It leaves the chart, the printout and the audit. The note:',
+    'ማስታወሻው በመስመር ተሰርዞ ከስምህ መጀመሪያ ፊደላት እና ከምክንያቱ ጋር በፋይሉ ውስጥ ይቆያል።'
+      + ' ከቻርቱ፣ ከህትመቱ እና ከኦዲቱ ይወጣል። ማስታወሻው፦',
+  ],
 
   // ----------------------------------------------------- case view: alerts
   'pt.how_evidence': ['a later reading was normal', 'ቀጣዩ ልኬት መደበኛ ነበር'],
@@ -266,6 +296,10 @@ const STRINGS = {
   'pt.alert_acked': ['Acknowledged {time}', 'ዕውቅና ተሰጥቷል {time}'],
   'pt.alert_acked_by': ['Acknowledged {time} by {by}', 'ዕውቅና ተሰጥቷል {time} (በ{by})'],
   'pt.alert_not_acked': ['Not yet acknowledged', 'ገና ዕውቅና አልተሰጠውም'],
+  'pt.alert_no_ack': [
+    'No acknowledgement needed: it closed as it was recorded, after labour had ended',
+    'ዕውቅና አያስፈልገውም፦ ምጡ ካበቃ በኋላ ሲመዘገብ ወዲያውኑ ተዘግቷል',
+  ],
   'pt.already_acked': ['Already acknowledged', 'ቀድሞ ዕውቅና ተሰጥቶታል'],
   'pt.resolve': ['Resolve', 'ዝጋ'],
   'pt.resolve_title': ['Resolve alert', 'ማስጠንቀቂያውን ዝጋ'],

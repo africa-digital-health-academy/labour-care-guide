@@ -1,18 +1,21 @@
 // Record layer (S5): entries with author and source, void and correct with a
 // reason, stage re-derivation, pushing and handover events, birth record.
+// M6: medication entries and notes are voided the same way; her departure
+// closes her open labour findings, and no later void leaves one open.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyObservations, voidObservation, previewVoid, correctObservation, recordEvent, applyBirth, voidDelivery,
   createCase, applyReferral, admissionEntries,
+  voidMedication, previewVoidMedication, oxytocinRunningFrom, voidNote, noteAction, EMERGENCY_NOTE,
 } from '../js/record.js';
 import { addAlerts, evaluateObs, refreshTimeAlerts } from '../js/alerts.js';
 import {
-  PROTOCOLS, pushingStart, secondStageClockStart, isLabouring, deriveStage, awaitingHandover,
+  PROTOCOLS, pushingStart, secondStageClockStart, isLabouring, deriveStage, awaitingHandover, dueList,
 } from '../js/protocol.js';
 import { CASE_SCHEMA, migrateCase, migrateAll } from '../js/migrate.js';
 import { chartSVG, sheetCount } from '../js/chart.js';
-import { ackIndex, flagState, ALERT_CODES } from '../js/partograph.js';
+import { ackIndex, flagState, ALERT_CODES, planText } from '../js/partograph.js';
 import { NOW, iso, mkPatient, LCG, ETH, codes } from './helpers.mjs';
 
 const latent = () => mkPatient({ status: 'latent', activeStartTime: null });
@@ -728,4 +731,301 @@ test('M5 review: a void reports the alerts the time rules opened apart (addedByC
   const v = voidObservation(p, ten.id, LCG, { by: 'TE', reason: 'typed 10 for 7', at });
   assert.deepEqual(codes(v.added), ['lcg_progress', 'lcg_progress_due']);
   assert.deepEqual(v.addedByClock, [v.added[1].title], 'the alert raised by an entry is not put down to the clock');
+});
+
+// ------------------------------------- M6: void medication entries and notes ----
+// A drug recorded in error used to stay "given" on the chart, the print, the
+// referral note and the FHIR export: only observations could be voided.
+
+// a void runs the time rules at its own time: pinned to the fixtures' clock
+const AT = NOW.toISOString();
+const med = (id, hAgo, kind, extra = {}) => ({ id, time: iso(hAgo), kind, action: 'given', by: 'TE', ...extra });
+/** An oxytocin medication record: 'start' and 'rate' carry a rate, 'stop' the modal's stop text. */
+const oxy = (id, hAgo, action) => ({
+  id, time: iso(hAgo), kind: 'oxytocin', action, by: 'TE',
+  ...(action === 'stop' ? { detail: 'Oxytocin STOPPED' } : { detail: '', oxyUL: 2.5, oxyDrops: 10 }),
+});
+
+test('M6: voidMedication keeps the entry struck through; an unknown or voided id, no reason or no initials is refused', () => {
+  const p = mkPatient({ meds: [med('gen', 2, 'medicine', { detail: 'Gentamicin 80 mg IV' })] });
+  const kept = structuredClone(p);
+  assert.throws(() => voidMedication(p, 'nope', LCG, { by: 'TE', reason: 'wrong woman' }), /Medication entry not found/);
+  assert.throws(() => voidMedication(p, 'gen', LCG, { by: 'TE', reason: '  ' }), /reason is required/);
+  assert.throws(() => voidMedication(p, 'gen', LCG, { by: ' ', reason: 'wrong woman' }), /Initials are required/);
+  assert.throws(() => voidMedication(p, 'gen', LCG, { reason: 'wrong woman' }), /Initials are required/);
+  assert.deepEqual(p, kept, 'a refused void changes nothing');
+  const r = voidMedication(p, 'gen', LCG, { by: 'TE', reason: 'given to another woman', at: iso(1) });
+  assert.equal(p.meds.length, 1, 'nothing is deleted');
+  assert.deepEqual(p.meds[0].voided, { at: iso(1), by: 'TE', reason: 'given to another woman' });
+  assert.equal(p.meds[0].detail, 'Gentamicin 80 mg IV', 'the values stay');
+  assert.deepEqual([r.entry, r.oxytocin, r.added, r.resolved], [p.meds[0], { before: false, after: false }, [], []]);
+  assert.throws(() => voidMedication(p, 'gen', LCG, { by: 'TE', reason: 'again' }), /already voided/);
+  // a medicine or IV fluid voided while oxytocin runs leaves the infusion alone
+  const q = mkPatient({ oxytocinRunning: true, meds: [oxy('s', 3, 'start'), med('rl', 2, 'ivfluid', { detail: 'RL 1 L' })] });
+  assert.deepEqual(voidMedication(q, 'rl', LCG, { by: 'TE', reason: 'duplicate', at: AT }).oxytocin, { before: true, after: true });
+});
+
+test('M6: voiding an oxytocin record re-derives whether the infusion runs: the latest record that stands decides', () => {
+  // a start recorded in error: nothing else stands, nothing runs
+  const a = mkPatient({ oxytocinRunning: true, meds: [oxy('s', 3, 'start')] });
+  assert.deepEqual(voidMedication(a, 's', LCG, { by: 'TE', reason: 'wrong woman', at: AT }).oxytocin, { before: true, after: false });
+  assert.equal(a.oxytocinRunning, false);
+  // a stop recorded in error: the rate before it stands, so it runs again
+  const b = mkPatient({ oxytocinRunning: false, meds: [oxy('s', 3, 'start'), oxy('r', 2, 'rate'), oxy('x', 1, 'stop')] });
+  assert.deepEqual(voidMedication(b, 'x', LCG, { by: 'TE', reason: 'not stopped', at: AT }).oxytocin, { before: false, after: true });
+  // a restart voided: the stop before it is the latest that stands
+  const c = mkPatient({ oxytocinRunning: true, meds: [oxy('s', 3, 'start'), oxy('x', 2, 'stop'), oxy('s2', 1, 'start')] });
+  voidMedication(c, 's2', LCG, { by: 'TE', reason: 'wrong woman', at: AT });
+  assert.equal(c.oxytocinRunning, false);
+  // the first start voided while a later rate stands: still running
+  const d = mkPatient({ oxytocinRunning: true, meds: [oxy('s', 3, 'start'), oxy('r', 2, 'rate')] });
+  voidMedication(d, 's', LCG, { by: 'TE', reason: 'duplicate', at: AT });
+  assert.equal(d.oxytocinRunning, true);
+  // by time, not by the order of the list; a v1 stop (no action) is known by its text
+  const e = mkPatient({
+    oxytocinRunning: true,
+    meds: [oxy('late', 1, 'rate'), { id: 'v1', time: iso(2), kind: 'oxytocin', detail: 'Oxytocin STOPPED', by: null }, oxy('s', 3, 'start')],
+  });
+  voidMedication(e, 'late', LCG, { by: 'TE', reason: 'wrong woman', at: AT });
+  assert.equal(e.oxytocinRunning, false, 'the v1 stop is now the latest record');
+  // two records at the same time: the one entered later wins
+  assert.equal(oxytocinRunningFrom({ meds: [oxy('a', 1, 'start'), oxy('b', 1, 'stop')] }), false);
+  assert.equal(oxytocinRunningFrom({ meds: [oxy('b', 1, 'stop'), oxy('a', 1, 'start')] }), true);
+  assert.equal(oxytocinRunningFrom({}), false);
+});
+
+test('M6: the oxytocin due chip follows a voided oxytocin record', () => {
+  // LCG: an oxytocin record is due every 60 min while the infusion runs (F10)
+  const p = mkPatient({ oxytocinRunning: false, meds: [oxy('s', 3, 'start'), oxy('x', 2, 'stop')] });
+  const due = () => dueList(p, PROTOCOLS.lcg, NOW).find(d => d.type === 'oxytocin');
+  assert.equal(due(), undefined, 'stopped: no oxytocin check is due');
+  voidMedication(p, 'x', LCG, { by: 'TE', reason: 'stop recorded on the wrong woman', at: NOW.toISOString() });
+  const item = due();
+  assert.deepEqual([item.last, item.dueAt, item.state], [iso(3), iso(2), 'overdue'], 'running again: due 60 min after its last record');
+  voidMedication(p, 's', LCG, { by: 'TE', reason: 'never started', at: NOW.toISOString() });
+  assert.equal(due(), undefined, 'no record stands: no check is due');
+});
+
+test('M6: a medication void runs the time rules in the same save; its preview lists exactly what they open and close', () => {
+  // 13 h of active first stage (limit 12 h) and a time alert left over from a second stage taken back
+  const p = mkPatient({ createdAt: iso(14), admission: { time: iso(14) }, activeStartTime: iso(13), meds: [med('amp', 2, 'medicine', { detail: 'Ampicillin 2 g IV' })] });
+  const [stale] = addAlerts(p, [{ code: 'second_warn', severity: 'warn', title: 'Second stage 1 h', advice: [] }], 'time', { time: iso(1) });
+  const at = NOW.toISOString();
+  const kept = structuredClone(p);
+  const pv = previewVoidMedication(p, 'amp', LCG, { at });
+  assert.deepEqual(p, kept, 'the preview changes nothing');
+  const r = voidMedication(p, 'amp', LCG, { by: 'TE', reason: 'recorded on the wrong woman', at });
+  assert.deepEqual(codes(r.added), ['active_long']);
+  assert.deepEqual(r.addedByClock, [r.added[0].title]);
+  assert.deepEqual([r.resolved, stale.resolvedHow], [[stale], 'cleared']);
+  assert.deepEqual([pv.added, pv.addedByClock, pv.resolved, pv.oxytocin],
+    [r.addedByClock, r.addedByClock, [stale.title], { before: false, after: false }], 'the dialog listed exactly these');
+  const tick = refreshTimeAlerts(p, LCG, NOW);
+  assert.deepEqual([tick.added, tick.resolved], [[], []], 'nothing left for the heartbeat');
+});
+
+test('M6: voidNote keeps the note struck through; refuses an unknown or voided id, no reason, no initials, and the notes the app writes', () => {
+  const p = mkPatient({
+    notes: [
+      { id: 'n1', time: iso(2), by: 'TE', text: 'Cervix 7 cm, progressing', plan: 'Reassess in 4 h' },
+      { id: 'ack', time: iso(1.5), by: 'TE', kind: 'ack', text: 'Alerts acknowledged: FHR 170 bpm', plan: 'senior' },
+      { id: 'v1ack', time: iso(1.4), by: 'TE', text: 'Alerts acknowledged: FHR 165 bpm', plan: 'monitoring' },
+      { id: 'emg', time: iso(1.2), by: 'TE', text: EMERGENCY_NOTE + 'Cord prolapse', plan: 'emergency management + referral assessment' },
+    ],
+  });
+  applyReferral(p, { time: iso(1), reasons: ['Prolonged labour'], facility: 'Hospital' }, { by: 'TE' });
+  const referral = p.notes.at(-1);
+  assert.deepEqual(p.notes.map(noteAction), [null, 'ack', 'ack', 'emergency', 'referral']);
+  assert.equal(noteAction({ text: 'Plan agreed with her', plan: 'referral' }), null, 'a typed plan is not the referral note');
+  const kept = structuredClone(p);
+  assert.throws(() => voidNote(p, 'nope', { by: 'TE', reason: 'x' }), /Note not found/);
+  assert.throws(() => voidNote(p, 'n1', { by: 'TE', reason: '' }), /reason is required/);
+  assert.throws(() => voidNote(p, 'n1', { by: '', reason: 'wrong case' }), /Initials are required/);
+  for (const id of ['ack', 'v1ack', 'emg', referral.id]) {
+    assert.throws(() => voidNote(p, id, { by: 'TE', reason: 'x' }), /is the record of .+ and cannot be voided/, id);
+  }
+  assert.deepEqual(p, kept, 'a refused void changes nothing');
+  const r = voidNote(p, 'n1', { by: 'AB', reason: 'written on the wrong case', at: iso(0.5) });
+  assert.equal(r.entry, p.notes[0]);
+  assert.deepEqual(p.notes[0].voided, { at: iso(0.5), by: 'AB', reason: 'written on the wrong case' });
+  assert.deepEqual([p.notes[0].text, p.notes.length], ['Cervix 7 cm, progressing', 5], 'kept, nothing deleted');
+  assert.throws(() => voidNote(p, 'n1', { by: 'AB', reason: 'again' }), /already voided/);
+});
+
+// ---------------------------- M6: her departure closes her labour findings ----
+
+/** In active labour from 7 h ago (5 cm); FHR 170 at 3 h ago; FHR 140 at 2.5 h ago cleared it. */
+function clearedFinding() {
+  const p = admitted(8);
+  applyObservations(p, iso(7), { exam: { dilatation: 5 } }, LCG, { by: 'TE', enteredAt: iso(7) });
+  applyObservations(p, iso(3), { baby: { fhr: 170 } }, LCG, { by: 'TE', enteredAt: iso(3) });
+  const normal = applyObservations(p, iso(2.5), { baby: { fhr: 140 } }, LCG, { by: 'TE', enteredAt: iso(2.5) }).obs[0];
+  const fhr = p.alerts.find(a => a.code === 'fhr_abn');
+  assert.deepEqual([fhr.resolved, fhr.resolvedHow], [true, 'evidence']);
+  return { p, normal, fhr };
+}
+
+/** clearedFinding, referred 1 h ago and gone 30 min ago. */
+function departed() {
+  const c = clearedFinding();
+  applyReferral(c.p, { time: iso(1), reasons: ['Prolonged labour'], facility: 'Hospital' }, { by: 'TE' });
+  recordEvent(c.p, 'handover', iso(0.5), LCG, { by: 'AB' });
+  return c;
+}
+
+test('M6: at her departure her open labour findings close at the departure time; maternal findings stay open', () => {
+  const p = admitted(8);
+  applyObservations(p, iso(7), { exam: { dilatation: 5 } }, LCG, { by: 'TE', enteredAt: iso(7) });
+  applyObservations(p, iso(2), { baby: { fhr: 170 }, vitals: { sys: 150, dia: 95 }, supportive: { companion: 'N' } }, LCG,
+    { by: 'TE', enteredAt: iso(2) });
+  refreshTimeAlerts(p, LCG, new Date(iso(0.75))); // 5 cm for 6.25 h: the progress limit, on the heartbeat
+  assert.deepEqual(codes(p.alerts), ['fhr_abn', 'htn', 'no_companion', 'lcg_progress_due']);
+  applyReferral(p, { time: iso(1), reasons: ['Abnormal FHR'], facility: 'Hospital' }, { by: 'TE' });
+  assert.deepEqual(p.alerts.filter(a => a.resolved), [], 'still here: every finding stays open');
+  const r = recordEvent(p, 'handover', iso(0.5), LCG, { by: 'AB' });
+  const alert = code => p.alerts.find(a => a.code === code);
+  assert.deepEqual(codes(r.resolved), ['lcg_progress_due', 'fhr_abn', 'no_companion']);
+  for (const code of ['fhr_abn', 'no_companion', 'lcg_progress_due']) {
+    const a = alert(code);
+    assert.deepEqual([a.resolved, a.resolvedHow, a.resolvedAt, a.resolvedBy], [true, 'handover', iso(0.5), null], code);
+  }
+  assert.equal(alert('htn').resolved, false, 'raised BP is a maternal finding: it stays as it is');
+  assert.equal(alert('fhr_abn').ack, false, 'closed, still awaiting acknowledgement like an alert closed at the birth');
+  assert.equal(isLabouring(p), false);
+  // a departure is recorded once and is never voided: recording it again is refused and changes nothing
+  const kept = structuredClone(p);
+  assert.throws(() => recordEvent(p, 'handover', iso(0.2), LCG, { by: 'TE' }), /already recorded/);
+  assert.deepEqual(p, kept);
+});
+
+test('M6: after her departure (or the birth) a void that takes away what had cleared a labour finding closes it at that end', () => {
+  const { p, normal, fhr } = departed();
+  const at = NOW.toISOString();
+  const pv = previewVoid(p, normal.id, LCG, { at });
+  assert.deepEqual([pv.reopened, pv.resolved], [[], [fhr.title]], 'the dialog never says it re-opens');
+  const r = voidObservation(p, normal.id, LCG, { by: 'TE', reason: 'reading of another woman', at });
+  assert.deepEqual([fhr.resolved, fhr.resolvedHow, fhr.resolvedAt], [true, 'handover', iso(0.5)]);
+  assert.deepEqual([r.reopened, r.resolved], [[], [fhr]]);
+  assert.deepEqual(p.alerts.filter(a => !a.resolved), [], 'she has left: no labour alert stays open');
+  // the same after the birth: it closes at the birth
+  const b = clearedFinding();
+  applyBirth(b.p, { time: iso(0.5), outcome: 'live', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  voidObservation(b.p, b.normal.id, LCG, { by: 'TE', reason: 'reading of another woman', at });
+  assert.deepEqual([b.fhr.resolved, b.fhr.resolvedHow, b.fhr.resolvedAt], [true, 'birth', iso(0.5)]);
+  // still in labour, it re-opens as before
+  const l = clearedFinding();
+  assert.deepEqual(voidObservation(l.p, l.normal.id, LCG, { by: 'TE', reason: 'x', at }).reopened, [l.fhr]);
+});
+
+test('M6: after her departure a correction re-clears a labour finding when the value stays normal, else closes it at the departure', () => {
+  const at = NOW.toISOString();
+  const one = departed();
+  const c = correctObservation(one.p, one.normal.id, { fhr: 142 }, LCG, { by: 'TE', reason: 'typed 140 for 142', at });
+  assert.deepEqual([one.fhr.resolved, one.fhr.resolvedHow, one.fhr.resolvedAt, one.fhr.resolvedByObs],
+    [true, 'evidence', iso(2.5), c.obs[0].id], 'the corrected reading clears it as the old one did');
+  assert.deepEqual([c.added, c.voided.reopened], [[], []]);
+  // corrected to an abnormal value: it joins the re-opened finding, which closes at her departure, unasked
+  const two = departed();
+  const d = correctObservation(two.p, two.normal.id, { fhr: 175 }, LCG, { by: 'TE', reason: 'typed 140 for 175', at });
+  assert.deepEqual([two.fhr.resolved, two.fhr.resolvedHow, two.fhr.resolvedAt], [true, 'handover', iso(0.5)]);
+  assert.ok(two.fhr.obsIds.includes(d.obs[0].id));
+  assert.deepEqual(d.added, [], 'she has left: nothing to acknowledge on this device');
+  assert.deepEqual(two.p.alerts.filter(a => !a.resolved), []);
+});
+
+test('M6: after a birth, a labour finding made after it closes at her later departure; a postpartum finding stays', () => {
+  const p = admitted(8);
+  applyObservations(p, iso(7), { exam: { dilatation: 6 } }, LCG, { enteredAt: iso(7) });
+  applyBirth(p, { time: iso(3), outcome: 'live', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  // an infusion still running after the birth, and a soft uterus
+  const pp = applyObservations(p, iso(2), { oxytocin: { dropsMin: 70 }, ppMother: { bleeding: 'normal', tone: 'soft', pulse: 88 } }, LCG, { by: 'TE' });
+  assert.deepEqual(codes(pp.added), ['oxy_rate', 'pp_atony']);
+  applyReferral(p, { time: iso(1.5), reasons: ['Uterine atony'], facility: 'Hospital' }, { by: 'TE' });
+  recordEvent(p, 'handover', iso(1), LCG, { by: 'TE' });
+  const rate = p.alerts.find(a => a.code === 'oxy_rate');
+  assert.deepEqual([rate.resolved, rate.resolvedHow, rate.resolvedAt], [true, 'handover', iso(1)]);
+  assert.equal(p.alerts.find(a => a.code === 'pp_atony').resolved, false, 'not a labour finding: it stays as it is');
+  // that oxytocin check corrected after she left: its finding closes at the departure, unasked
+  const c = correctObservation(p, pp.obs[0].id, { dropsMin: 72 }, LCG, { by: 'TE', reason: 'typo', at: NOW.toISOString() });
+  assert.deepEqual(c.added, []);
+  assert.deepEqual(p.alerts.filter(a => a.code === 'oxy_rate' && !a.resolved), []);
+});
+
+test('M6: voiding the birth record of a woman who has left keeps her referred, off the ward board, her labour findings closed', () => {
+  const born = () => {
+    const p = admitted(8);
+    applyObservations(p, iso(7), { exam: { dilatation: 5 } }, LCG, { enteredAt: iso(7) });
+    applyObservations(p, iso(3), { baby: { fhr: 170 } }, LCG, { by: 'TE', enteredAt: iso(3) });
+    applyObservations(p, iso(2.5), { exam: { dilatation: 10 } }, LCG, { by: 'TE', enteredAt: iso(2.5) });
+    applyBirth(p, { time: iso(2), outcome: 'live', placentaComplete: 'N' }, {}, LCG, { by: 'TE' });
+    applyReferral(p, { time: iso(1.5), reasons: ['Retained placenta'], facility: 'Hospital' }, { by: 'TE' });
+    const fhr = p.alerts.find(a => a.code === 'fhr_abn');
+    assert.equal(fhr.resolvedHow, 'birth');
+    return { p, fhr };
+  };
+  const { p, fhr } = born();
+  recordEvent(p, 'handover', iso(1), LCG, { by: 'TE' });
+  const r = voidDelivery(p, LCG, { by: 'TE', reason: 'wrong birth time', at: iso(0.5) });
+  assert.equal(p.status, 'referred');
+  assert.equal(isLabouring(p), false, 'she has left: never back in labour on the ward board');
+  assert.deepEqual([fhr.resolved, fhr.resolvedHow, fhr.resolvedAt], [true, 'handover', iso(1)]);
+  assert.deepEqual(codes(r.resolved), ['retained_products', 'fhr_abn']);
+  assert.deepEqual([r.reopened, p.alerts.filter(a => !a.resolved)], [[], []]);
+  // referred but not yet gone: she is monitored in labour again (S8), the finding open
+  const stay = born();
+  const s = voidDelivery(stay.p, LCG, { by: 'TE', reason: 'wrong birth time', at: iso(0.5) });
+  assert.deepEqual([stay.p.status, awaitingHandover(stay.p), stay.fhr.resolved], ['referred', true, false]);
+  assert.deepEqual(s.reopened, [stay.fhr]);
+});
+
+// ------------------- M6: an alert closed in the save that raised it asks for nothing ----
+
+test('M6: a labour finding closed in the save that raised it, after the birth or her departure, is marked needsAck false', () => {
+  // back-timed after the birth: the FHR closes at the birth as it is recorded; the raised BP still asks
+  const p = admitted(8);
+  applyObservations(p, iso(7), { exam: { dilatation: 6 } }, LCG, { enteredAt: iso(7) });
+  applyBirth(p, { time: iso(1), outcome: 'live', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  const r = applyObservations(p, iso(3), { baby: { fhr: 170 }, vitals: { sys: 150, dia: 95 } }, LCG, { by: 'TE' });
+  const fhr = p.alerts.find(a => a.code === 'fhr_abn'), htn = p.alerts.find(a => a.code === 'htn');
+  assert.deepEqual([fhr.resolved, fhr.resolvedHow, fhr.ack, fhr.needsAck], [true, 'birth', false, false]);
+  assert.deepEqual([htn.resolved, htn.needsAck, codes(r.added)], [false, undefined, ['htn']], 'a maternal finding asks as usual');
+  // restaging after the birth: a voided 10 cm puts the exam after it back in active labour; its progress alert closes at the birth
+  const q = latent();
+  applyObservations(q, iso(10), { exam: { dilatation: 7 } }, LCG);
+  const ten = applyObservations(q, iso(6), { exam: { dilatation: 10 } }, LCG).obs[0];
+  applyObservations(q, iso(5), { exam: { dilatation: 7 } }, LCG);
+  applyBirth(q, { time: iso(1), outcome: 'live', mode: 'svd', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  voidObservation(q, ten.id, LCG, { by: 'TE', reason: 'typed 10 for 7', at: AT });
+  const progress = q.alerts.find(a => a.code === 'lcg_progress');
+  assert.deepEqual([progress.resolvedHow, progress.needsAck], ['birth', false]);
+  // a correction after her departure: the new episode closes at the departure needing nothing; the one shown open in labour still waits
+  const d = admitted(11);
+  applyObservations(d, iso(10), { exam: { dilatation: 6 } }, LCG, { enteredAt: iso(10) });
+  const exam = applyObservations(d, iso(5), { exam: { dilatation: 6, descent: 3 } }, LCG, { enteredAt: iso(5) }).obs[0];
+  const first = d.alerts.find(a => a.code === 'lcg_progress');
+  applyReferral(d, { time: iso(2), reasons: ['Prolonged labour'], facility: 'Hospital' }, { by: 'TE' });
+  recordEvent(d, 'handover', iso(1.5), LCG, { by: 'TE' });
+  correctObservation(d, exam.id, { dilatation: 6, descent: 2 }, LCG, { by: 'TE', reason: 'descent mistyped', at: AT });
+  const again = d.alerts.find(a => a.code === 'lcg_progress' && a !== first);
+  assert.deepEqual([again.resolvedHow, again.needsAck], ['handover', false]);
+  assert.deepEqual([first.resolvedHow, first.ack, first.needsAck], ['handover', false, undefined], 'shown open in labour: it still asks');
+});
+
+test('M6: an alert acknowledged in labour is not asked again by a correction after her departure that closes as it is recorded', () => {
+  const { p, normal, fhr } = departed();
+  Object.assign(fhr, { ack: true, action: 'senior', actionTime: iso(2.9), ackBy: 'TE', ackCount: 1 });
+  const c = correctObservation(p, normal.id, { fhr: 175 }, LCG, { by: 'TE', reason: 'typed 140 for 175', at: AT });
+  assert.deepEqual([fhr.resolved, fhr.resolvedHow, fhr.resolvedAt], [true, 'handover', iso(0.5)]);
+  assert.deepEqual([fhr.ack, fhr.actionTime, fhr.reAlertedAt, fhr.needsAck], [true, iso(2.9), undefined, undefined],
+    'its acknowledgement stands: the re-asking was never shown');
+  assert.deepEqual(c.added, []);
+});
+
+test('M6: the referral note states its plan in words, as the summary and the chart plan row show it', () => {
+  const p = mkPatient();
+  applyReferral(p, { time: iso(1), reasons: ['Prolonged labour'], facility: 'Hospital' }, { by: 'TE' });
+  const note = p.notes.at(-1);
+  assert.equal(note.plan, 'Referred - see the referral note');
+  assert.equal(planText(note), 'Referred - see the referral note', 'not "referral"');
+  assert.deepEqual([noteAction(note), noteAction({ ...note, plan: 'referral' })], ['referral', 'referral'], 'a v1 referral note too');
 });

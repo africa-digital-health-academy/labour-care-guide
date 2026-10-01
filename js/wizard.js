@@ -25,6 +25,8 @@
 // alert in the acknowledgement dialog, so it starts on an action only when
 // every alert there is such a repeat and all share the same earlier action;
 // otherwise nothing is selected and the midwife picks (never a default).
+// M6: an alert closed in the save that raised it, after labour had ended
+// (needsAck: false), was never shown open and is never asked about.
 
 import {
   h, clear, openModal, numpad, stepper, segmented, toast, beep, alertBanner, byField, fmtTime, minutesAgoISO,
@@ -742,12 +744,22 @@ export function acknowledgeAlerts(p, alerts, action, by, at = new Date().toISOSt
 }
 
 /**
- * The acknowledgement dialog for the alerts given (info alerts are left out).
+ * The alerts the acknowledgement dialog asks about: all but a silent note
+ * (info) and an alert closed in the save that raised it, after labour had
+ * ended (needsAck: false, record.js settle), which was never shown open.
+ * Pure.
+ */
+export function alertsToAcknowledge(alerts) {
+  return (alerts || []).filter(a => a && a.severity !== 'info' && a.needsAck !== false);
+}
+
+/**
+ * The acknowledgement dialog for the alerts given (alertsToAcknowledge).
  * It starts on an action only as ackPreselect allows; otherwise none is
  * selected and "Acknowledge & record" stays disabled until one is tapped.
  */
 export function showAlertAckModal(patient, alerts) {
-  const real = (alerts || []).filter(a => a.severity !== 'info');
+  const real = alertsToAcknowledge(alerts);
   if (!real.length) return;
   if (S.settings.sound) beep(real.some(a => a.severity === 'danger') ? 'danger' : 'due');
 
