@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { setLang, t } from '../js/i18n.js';
 import { en, am } from '../js/i18n/patient.js';
-import { sinceText, minText, metaLine, admissionExamText, closeFields } from '../js/views/patient.js';
+import { sinceText, minText, metaLine, admissionExamText, closeFields, riskFactorsText } from '../js/views/patient.js';
 import { durationSince } from '../js/ui.js';
 import { fmtMin } from '../js/protocol.js';
 import { iso, mkPatient } from './helpers.mjs';
@@ -76,6 +76,16 @@ test('the admission summary follows the language of the moment; an unknown prese
   assert.equal(inLang('am', () => admissionExamText(exam)), '6 cm · የራስ መውረድ 3/5 · FHR 150 · በመቀመጫ');
   assert.equal(admissionExamText(exam), '6 cm · descent 3/5 · FHR 150 · breech', 'English again after the switch');
   assert.equal(inLang('am', () => admissionExamText({ dilatation: 4, fhr: 140, presentation: 'face' })), '4 cm · FHR 140 · face');
+});
+
+test('the summary names risk factors in words in the screen language; an unknown code is shown as stored', () => {
+  assert.equal(riskFactorsText(['prior_cs', 'anaemia']), 'Previous caesarean section, Anaemia');
+  assert.equal(inLang('am', () => riskFactorsText(['prior_cs', 'anaemia'])),
+    inLang('am', () => `${t('fm.risk.prior_cs')}, ${t('fm.risk.anaemia')}`));
+  assert.ok(inLang('am', () => ETHIOPIC.test(riskFactorsText(['anaemia']))), 'the Amharic draft, not the code');
+  assert.equal(riskFactorsText(['prior_cs', 'sickle_cell']), 'Previous caesarean section, sickle_cell');
+  assert.equal(riskFactorsText([]), '');
+  assert.equal(riskFactorsText(undefined), '');
 });
 
 test('closing refusals are shown in the screen language', () => {

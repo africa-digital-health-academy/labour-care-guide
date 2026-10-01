@@ -137,6 +137,11 @@ export const en = {
   'wz.ack_action': 'Action taken / decision (recorded on the chart):',
   'wz.ack_record': 'Acknowledge & record',
   'wz.ack_repeat': 'Repeat {n} - last acknowledged {time}: {action}',
+  // a new episode of a code: {time} and {action} are those of an earlier episode's last acknowledgement
+  'wz.ack_episode': 'Episode {n} - last acknowledged {time}: {action}',
+  'wz.ack_item_episode': 'Episode {n}',
+  'wz.ack_item_closed': 'Closed {time}',
+  'wz.ack_choose': 'Choose the action taken.',
 
   // medication
   'wz.med_title': 'Medication / IV fluids',
@@ -286,6 +291,10 @@ export const am = {
   'wz.ack_action': 'የተወሰደው እርምጃ / ውሳኔ (በቻርቱ ላይ ይመዘገባል)፦',
   'wz.ack_record': 'ተመልክቻለሁ፣ መዝግብ',
   'wz.ack_repeat': 'ለ{n}ኛ ጊዜ ተደግሟል - ለመጨረሻ ጊዜ ምላሽ የተሰጠው {time}፦ {action}',
+  'wz.ack_episode': 'ዙር {n} - ለመጨረሻ ጊዜ ምላሽ የተሰጠው {time}፦ {action}',
+  'wz.ack_item_episode': 'ዙር {n}',
+  'wz.ack_item_closed': '{time} ላይ ተዘግቷል',
+  'wz.ack_choose': 'የተወሰደውን እርምጃ ይምረጡ።',
 
   // medication
   'wz.med_title': 'መድኃኒት / IV ፈሳሽ',

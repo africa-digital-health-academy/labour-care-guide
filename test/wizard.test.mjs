@@ -2,17 +2,21 @@
 // step set, the steps offer the WHO codes the engine reads (F1, F7, F9, N3,
 // N4), and only defaults the midwife never touched are reported as defaulted.
 // M5: the text is looked up in the current language when a screen is built,
-// and an alert asked again names its last acknowledgement and starts on its
-// action; each acknowledgement is counted and its note tagged kind 'ack'.
+// and an alert asked again - or a new episode of a code acknowledged before -
+// names the last acknowledgement. The dialog starts on an action only when
+// every alert in it is such a repeat of the same action, never on a default;
+// its items are told apart by episode and closing time. Each acknowledgement
+// is counted and its note tagged kind 'ack'; one with no action is refused.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   WIZARD_TYPES, wizardTypeFor, computeDefaulted, wizardSteps, prefillValues, currentCode, timeChoices,
-  ackRepeat, ackPreselect, acknowledgeAlerts,
+  ackRepeat, ackPreselect, acknowledgeAlerts, ackRepeatText, ackItemTag,
 } from '../js/wizard.js';
 import { PROTOCOLS, dueList } from '../js/protocol.js';
 import { applyObservations } from '../js/record.js';
 import { t, setLang } from '../js/i18n.js';
+import { fmtTime } from '../js/ui.js';
 import { NOW, iso, mkPatient, LCG } from './helpers.mjs';
 
 const step = (type, key) => wizardSteps(type).find(s => s.key === key);
@@ -208,18 +212,118 @@ test('ackRepeat: nothing for an alert never acknowledged, or acknowledged since 
   assert.equal(ackRepeat(null), null);
 });
 
-test('ackPreselect: the earlier action, the most escalated one when repeats differ, otherwise monitoring', () => {
-  assert.equal(ackPreselect(undefined), 'monitoring');
-  assert.equal(ackPreselect([{ id: 'n', severity: 'warn', ack: false, action: null }]), 'monitoring');
+test('ackPreselect: the shared earlier action when every alert is a repeat; otherwise nothing, never monitoring', () => {
+  const fresh = { id: 'z', code: 'decel', severity: 'danger', ack: false, action: null, episode: 1 };
+  assert.equal(ackPreselect(undefined), null);
+  assert.equal(ackPreselect([]), null);
+  assert.equal(ackPreselect([fresh]), null, 'a new alert: no default action');
   assert.equal(ackPreselect([waiting({ reAlertedAt: iso(1), action: 'intervention' })]), 'intervention');
   assert.equal(ackPreselect([waiting({ reAlertedAt: iso(1), action: 'referral' })]), 'referral');
   assert.equal(ackPreselect([
+    waiting({ id: 'x', escalatedAt: iso(1), action: 'senior' }),
+    waiting({ id: 'y', code: 'htn', reAlertedAt: iso(1), action: 'senior' }),
+  ]), 'senior', 'every alert a repeat of the same action');
+  assert.equal(ackPreselect([
     waiting({ id: 'x', escalatedAt: iso(1), action: 'monitoring' }),
-    waiting({ id: 'y', reAlertedAt: iso(1), action: 'senior' }),
-    { id: 'z', severity: 'warn', ack: false, action: null },
-  ]), 'senior', 'never a step down from what was already done');
-  assert.equal(ackPreselect([waiting({ reAlertedAt: iso(1), action: 'transfer' })]), 'monitoring',
+    waiting({ id: 'y', code: 'htn', reAlertedAt: iso(1), action: 'senior' }),
+  ]), null, 'repeats of different actions: one action is written to all, so the midwife picks');
+  assert.equal(ackPreselect([waiting({ reAlertedAt: iso(1), action: 'senior' }), fresh]), null,
+    'a repeat with a new alert: nothing preselected');
+  assert.equal(ackPreselect([waiting({ reAlertedAt: iso(1), action: 'transfer' })]), null,
     'an action no longer offered is not preselected');
+});
+
+test('ackPreselect, walk: FHR 175 acknowledged as senior called, then FHR 180 opens a new danger alert - nothing preselected', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(2), { baby: { fhr: 175 } }, LCG, { by: 'TE' });
+  const abn = p.alerts.find(x => x.code === 'fhr_abn');
+  acknowledgeAlerts(p, [abn], 'senior', 'TE', iso(1.9));
+  const r = applyObservations(p, iso(1.5), { baby: { fhr: 180 } }, LCG, { by: 'TE' });
+  assert.deepEqual(r.added.map(a => [a.code, a.severity]), [['fhr_severe', 'danger']]);
+  assert.equal(ackRepeat(r.added[0], p.alerts), null, 'another code: not a repeat');
+  assert.equal(ackPreselect(r.added, p.alerts), null, 'the dialog starts with no action, not on monitoring');
+});
+
+// a case where fhr_abn was acknowledged (episode 1), cleared by a normal reading, then came back (episode 2)
+function secondEpisode() {
+  const p = mkPatient();
+  applyObservations(p, iso(3), { baby: { fhr: 165 } }, LCG, { by: 'TE' });
+  const first = p.alerts.find(x => x.code === 'fhr_abn');
+  acknowledgeAlerts(p, [first], 'senior', 'TE', iso(2.9));
+  applyObservations(p, iso(2.5), { baby: { fhr: 140 } }, LCG, { by: 'TE' });
+  const r = applyObservations(p, iso(2), { baby: { fhr: 166 } }, LCG, { by: 'AB' });
+  return { p, first, again: r.added };
+}
+
+test('ackRepeat: a new episode of a code acknowledged before names that acknowledgement and its own episode', () => {
+  const { p, first, again } = secondEpisode();
+  assert.equal(first.resolved, true, 'episode 1 closed on the normal reading');
+  assert.deepEqual(again.map(a => [a.code, a.episode, a.action]), [['fhr_abn', 2, null]]);
+  const [ep2] = again;
+  assert.deepEqual(ackRepeat(ep2, p.alerts), { episode: 2, at: iso(2.9), action: 'senior' });
+  assert.equal(ackRepeat(ep2), null, 'the earlier episodes are read from the case alerts given');
+  assert.equal(ackRepeatText(ep2, p.alerts), `Episode 2 - last acknowledged ${fmtTime(iso(2.9))}: Senior/colleague called`);
+  assert.equal(ackPreselect(again, p.alerts), 'senior', 'a new episode counts as a repeat');
+  assert.equal(ackPreselect([...again, { id: 'n', code: 'decel', severity: 'danger', ack: false, action: null }], p.alerts), null);
+
+  // episode 3 after episode 2 was acknowledged too: the last acknowledgement of the code
+  acknowledgeAlerts(p, again, 'intervention', 'AB', iso(1.9));
+  applyObservations(p, iso(1.5), { baby: { fhr: 141 } }, LCG, { by: 'AB' });
+  const [ep3] = applyObservations(p, iso(1), { baby: { fhr: 167 } }, LCG, { by: 'AB' }).added;
+  assert.deepEqual(ackRepeat(ep3, p.alerts), { episode: 3, at: iso(1.9), action: 'intervention' });
+  assert.equal(ackRepeat({ ...ep3, ack: true, action: 'senior' }, p.alerts), null, 'acknowledged since');
+  assert.equal(ackRepeat({ ...ep3, code: 'decel' }, p.alerts), null, 'no earlier episode of its own code');
+  assert.equal(ackRepeat({ ...ep3, episode: 1 }, p.alerts), null, 'episode 1 has no earlier episode');
+});
+
+test('ackRepeatText: a repeat of the same alert keeps its line; the action in the screen language', () => {
+  const a = waiting({ reAlertedAt: iso(1), ackCount: 2 });
+  assert.equal(ackRepeatText(a), `Repeat 2 - last acknowledged ${fmtTime(iso(1.5))}: Senior/colleague called`);
+  assert.equal(ackRepeatText(waiting()), null);
+  try {
+    setLang('am');
+    assert.equal(ackRepeatText(a), t('wz.ack_repeat', { n: 2, time: fmtTime(iso(1.5)), action: t('wz.act_senior') }));
+  } finally {
+    setLang('en');
+  }
+});
+
+test('ackItemTag: alerts with the same title are told apart by episode above 1 and by the closing time', () => {
+  const at = iso(1.2);
+  assert.equal(ackItemTag(waiting({ episode: 1 })), null, 'open, episode 1: nothing to add');
+  assert.equal(ackItemTag(waiting()), null, 'saved without an episode number: episode 1');
+  assert.equal(ackItemTag(waiting({ episode: 2 })), 'Episode 2');
+  assert.equal(ackItemTag(waiting({ resolved: true, resolvedAt: at })), `Closed ${fmtTime(at)}`);
+  assert.equal(ackItemTag(waiting({ episode: 3, resolved: true, resolvedAt: at })), `Episode 3 · Closed ${fmtTime(at)}`);
+  assert.equal(ackItemTag(waiting({ episode: 3, resolved: true, resolvedAt: at, ack: true })), 'Episode 3',
+    'closed and acknowledged: not awaiting acknowledgement');
+  assert.equal(ackItemTag(null), null);
+
+  // the walk: closed and re-opened episodes of one code, none acknowledged yet, carry the same title
+  const p = mkPatient();
+  [[3, 165], [2.5, 140], [2, 165], [1.5, 140], [1, 165]].forEach(([hAgo, fhr]) =>
+    applyObservations(p, iso(hAgo), { baby: { fhr } }, LCG, { by: 'TE' }));
+  const awaiting = p.alerts.filter(a => !a.ack);
+  assert.equal(awaiting.length, 3);
+  assert.equal(new Set(awaiting.map(a => a.title)).size, 1, 'the same title three times');
+  assert.deepEqual(awaiting.map(ackItemTag),
+    [`Closed ${fmtTime(iso(2.5))}`, `Episode 2 · Closed ${fmtTime(iso(1.5))}`, 'Episode 3']);
+  try {
+    setLang('am');
+    assert.equal(ackItemTag(awaiting[1]),
+      `${t('wz.ack_item_episode', { n: 2 })} · ${t('wz.ack_item_closed', { time: fmtTime(iso(1.5)) })}`);
+  } finally {
+    setLang('en');
+  }
+});
+
+test('acknowledgeAlerts refuses an action that is not offered (none chosen) and changes nothing', () => {
+  const p = mkPatient({ alerts: [waiting({ reAlertedAt: iso(1) })] });
+  const before = structuredClone(p);
+  for (const action of [null, undefined, '', 'transfer']) {
+    assert.throws(() => acknowledgeAlerts(p, [p.alerts[0]], action, 'TE', iso(0.9)), { message: t('wz.ack_choose') });
+  }
+  assert.deepEqual(p, before);
 });
 
 test('acknowledgeAlerts counts each acknowledgement and writes a note tagged kind ack; a repeat names the last one', () => {

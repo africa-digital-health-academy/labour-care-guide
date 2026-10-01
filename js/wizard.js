@@ -20,7 +20,11 @@
 // loads, because the language is set once the settings are read and can change
 // while the app runs. What is stored in the record (note text, medication
 // detail) stays English. An alert asked again shows the repeat number and the
-// last acknowledgement, and the modal starts on the action taken then.
+// last acknowledgement; a new episode of a code acknowledged before shows the
+// episode number and that acknowledgement. One action is written to every
+// alert in the acknowledgement dialog, so it starts on an action only when
+// every alert there is such a repeat and all share the same earlier action;
+// otherwise nothing is selected and the midwife picks (never a default).
 
 import {
   h, clear, openModal, numpad, stepper, segmented, toast, beep, alertBanner, byField, fmtTime, minutesAgoISO,
@@ -626,33 +630,54 @@ const ACK_ACTIONS = [
   { value: 'intervention', label: () => t('wz.act_intervention') },
   { value: 'referral', label: () => t('wz.act_referral'), alert: true },
 ];
-const ACK_RANK = Object.fromEntries(ACK_ACTIONS.map((o, i) => [o.value, i]));
+const ACK_OFFERED = new Set(ACK_ACTIONS.map(o => o.value));
 
 /** Acknowledgements an alert has had. Alerts saved before M5 kept no count: an earlier action counts as one. */
 const acksOf = a => a.ackCount || (a.action ? 1 : 0);
 
-/**
- * An alert waiting for acknowledgement again - asked again by a new entry
- * (reAlertedAt) or raised in severity (escalatedAt) after it was acknowledged:
- * {n, at, action}, n the repeat number (the acknowledgements it has had), at
- * and action those of the last one. null for an alert never acknowledged, or
- * acknowledged since it was asked again. Pure.
- */
-export function ackRepeat(a) {
-  if (!a || a.ack || !a.action || !(a.reAlertedAt || a.escalatedAt)) return null;
-  return { n: acksOf(a), at: a.actionTime || null, action: a.action };
+const episodeOf = a => a.episode || 1;
+// acknowledgements in the order they were made; the same time (acknowledged together): the later episode last
+const byAckTime = (x, y) => String(x.actionTime || '').localeCompare(String(y.actionTime || '')) || episodeOf(x) - episodeOf(y);
+
+/** The last acknowledged earlier episode of a's code among the case's alerts, or null. */
+function lastEarlierAck(a, alerts) {
+  const earlier = (Array.isArray(alerts) ? alerts : [])
+    .filter(x => x && x.code === a.code && x.action && episodeOf(x) < episodeOf(a));
+  return earlier.sort(byAckTime).at(-1) || null;
 }
 
 /**
- * The action the acknowledgement modal starts on: the earlier action of the
- * alerts asked again - the most escalated one when they differ, so the choice
- * offered never steps down from what was already done - else 'monitoring'.
- * An earlier action that is no longer offered is ignored. Pure.
+ * The last acknowledgement an alert waiting for acknowledgement follows:
+ * - the same alert asked again by a new entry (reAlertedAt) or raised in
+ *   severity (escalatedAt) after it was acknowledged: {n, at, action}, n the
+ *   repeat number (the acknowledgements it has had), at and action those of
+ *   its last one;
+ * - a new episode of a code acknowledged before (resolved, then raised
+ *   again), not yet acknowledged itself: {episode, at, action}, episode its
+ *   number, at and action the last acknowledgement of an earlier episode of
+ *   the code, read from `alerts` (the case's alerts).
+ * null for an alert acknowledged since, or with no acknowledgement behind it. Pure.
  */
-export function ackPreselect(alerts) {
-  return (alerts || []).map(ackRepeat)
-    .filter(r => r && own(ACK_RANK, r.action))
-    .reduce((best, r) => (ACK_RANK[r.action] > ACK_RANK[best] ? r.action : best), 'monitoring');
+export function ackRepeat(a, alerts = []) {
+  if (!a || a.ack) return null;
+  if (a.action) return a.reAlertedAt || a.escalatedAt ? { n: acksOf(a), at: a.actionTime || null, action: a.action } : null;
+  const last = lastEarlierAck(a, alerts);
+  return last ? { episode: episodeOf(a), at: last.actionTime || null, action: last.action } : null;
+}
+
+/**
+ * The action the acknowledgement dialog starts on, or null for none. One
+ * action is written to every alert in the dialog, so one is preselected only
+ * when every alert is a repeat (ackRepeat, with `all` the case's alerts) and
+ * all share the same earlier action, still offered. Otherwise the midwife
+ * picks: never a default, never 'monitoring' by itself. Pure.
+ */
+export function ackPreselect(alerts, all = []) {
+  const repeats = (alerts || []).map(a => ackRepeat(a, all));
+  if (!repeats.length || repeats.some(r => !r)) return null;
+  const actions = new Set(repeats.map(r => r.action));
+  const [action] = actions;
+  return actions.size === 1 && ACK_OFFERED.has(action) ? action : null;
 }
 
 function actionLabel(value) {
@@ -660,22 +685,52 @@ function actionLabel(value) {
   return o ? say(o.label) : String(value);
 }
 
-/** "Repeat n - last acknowledged HH:MM: action" under an alert asked again; null otherwise. */
-function repeatLine(a) {
-  const r = ackRepeat(a);
+/**
+ * "Repeat n - last acknowledged HH:MM: action" for an alert asked again,
+ * "Episode n - last acknowledged HH:MM: action" for a new episode of a code
+ * acknowledged before (alerts: the case's alerts); null otherwise. Pure.
+ */
+export function ackRepeatText(a, alerts = []) {
+  const r = ackRepeat(a, alerts);
   if (!r) return null;
-  return h('p', { class: 'ack-repeat', style: 'margin:6px 0 0;font-weight:600' },
-    t('wz.ack_repeat', { n: r.n, time: fmtTime(r.at), action: actionLabel(r.action) }));
+  const vars = { time: fmtTime(r.at), action: actionLabel(r.action) };
+  return r.episode ? t('wz.ack_episode', { ...vars, n: r.episode }) : t('wz.ack_repeat', { ...vars, n: r.n });
+}
+
+/**
+ * What tells apart dialog items with the same title (one code, several
+ * episodes): the episode number above 1, and the closing time of a closed
+ * alert still awaiting acknowledgement. null when neither applies. Pure.
+ */
+export function ackItemTag(a) {
+  if (!a) return null;
+  const parts = [
+    episodeOf(a) > 1 ? t('wz.ack_item_episode', { n: episodeOf(a) }) : null,
+    a.resolved && !a.ack ? t('wz.ack_item_closed', { time: fmtTime(a.resolvedAt) }) : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+/** One alert of the dialog: its tag above the banner, its repeat line under the advice. */
+function ackItem(a, all) {
+  const tag = ackItemTag(a);
+  const repeat = ackRepeatText(a, all);
+  return [
+    tag ? h('p', { class: 'ack-item-tag', style: 'margin:8px 0 4px;font-size:.85rem;font-weight:700' }, tag) : null,
+    alertBanner(a, repeat ? h('p', { class: 'ack-repeat', style: 'margin:6px 0 0;font-weight:600' }, repeat) : null),
+  ];
 }
 
 /**
  * Mark the alerts acknowledged by `by` at `at` (counting the acknowledgement
  * in ackCount) and write the decision note. The note is tagged kind 'ack' (the
  * audit leaves acknowledgements out of the hourly assessment and plan); its
- * text is record data and stays English. Mutates p and does not save it:
+ * text is record data and stays English. An action that is not offered (none
+ * chosen) is refused before anything changes. Mutates p and does not save it:
  * showAlertAckModal persists it through commit().
  */
 export function acknowledgeAlerts(p, alerts, action, by, at = new Date().toISOString()) {
+  if (!ACK_OFFERED.has(action)) throw new Error(t('wz.ack_choose'));
   // matched by id as well: after a failed save the case holds restored copies
   const picked = a => alerts.some(x => x === a || (x.id != null && x.id === a.id));
   for (const a of (p.alerts || []).filter(picked)) {
@@ -686,14 +741,21 @@ export function acknowledgeAlerts(p, alerts, action, by, at = new Date().toISOSt
   }];
 }
 
+/**
+ * The acknowledgement dialog for the alerts given (info alerts are left out).
+ * It starts on an action only as ackPreselect allows; otherwise none is
+ * selected and "Acknowledge & record" stays disabled until one is tapped.
+ */
 export function showAlertAckModal(patient, alerts) {
   const real = (alerts || []).filter(a => a.severity !== 'info');
   if (!real.length) return;
   if (S.settings.sound) beep(real.some(a => a.severity === 'danger') ? 'danger' : 'due');
 
-  let action = ackPreselect(real), by = getBy(), busy = false;
+  const all = patient.alerts || [];
+  let action = ackPreselect(real, all), by = getBy(), busy = false;
   const err = errorLine();
   const acknowledge = async () => {
+    if (!action) { err.textContent = t('wz.ack_choose'); return; }
     if (!by) { err.textContent = t('wz.initials_required'); return; }
     if (busy) return;
     busy = true;
@@ -708,17 +770,16 @@ export function showAlertAckModal(patient, alerts) {
     closeFn();
     if (action === 'referral') location.hash = `#/p/${patient.id}/referral`;
   };
+  const record = h('button', { class: 'btn', disabled: !action, onclick: acknowledge }, t('wz.ack_record'));
   // alert titles and advice are shown as alerts.js wrote them (English)
   const body = h('div', null,
     h('h2', null, '⚠ ' + (real.length === 1 ? real[0].title : t('wz.n_alerts', { n: real.length }))),
-    real.map(a => alertBanner(a, repeatLine(a))),
+    real.map(a => ackItem(a, all)),
     h('h3', null, t('wz.ack_action')),
-    segmented(inLang(ACK_ACTIONS), action, v => { action = v; }),
+    segmented(inLang(ACK_ACTIONS), action, v => { action = v; record.disabled = false; err.textContent = ''; }),
     byField(by, v => { by = v; err.textContent = ''; }),
     err,
-    h('div', { class: 'wizard-nav' },
-      h('button', { class: 'btn', onclick: acknowledge }, t('wz.ack_record')),
-    ),
+    h('div', { class: 'wizard-nav' }, record),
   );
   const closeFn = openModal(body, { locked: true });
 }

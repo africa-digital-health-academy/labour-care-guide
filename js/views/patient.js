@@ -592,6 +592,8 @@ async function voidEntry(p, o) {
   if (reopened) toast(reopened === 1 ? t('pt.reopened_one', { n: 1 }) : t('pt.reopened_other', { n: reopened }), 'danger');
   const opened = (done.result.added || []).length;
   if (opened) toast(opened === 1 ? t('pt.opened_one', { n: 1 }) : t('pt.opened_other', { n: opened }), 'danger');
+  // alerts the void opened (restaging, time rules) are acknowledged now, as after recording an entry
+  if (opened) showAlertAckModal(p, done.result.added);
 }
 
 async function correctEntry(p, o) {
@@ -819,10 +821,23 @@ function admissionCard(p) {
     p.secondStageStart ? kv(t('pt.adm_second_from'), fmtDT(p.secondStageStart)) : null,
     pushing ? kv(t('pushing'), fmtDT(pushing)) : null,
     kv(t('pt.adm_companion'), wanted),
-    kv(t('pt.adm_risk'), (p.riskFactors || []).join(', ') || t('pt.none_recorded')),
+    kv(t('pt.adm_risk'), riskFactorsText(p.riskFactors) || t('pt.none_recorded')),
     kv(t('pt.adm_contact'), [p.phone, p.kebele].filter(Boolean).join(' · ') || '—'),
     kv(t('pt.adm_protocol'), getProtocol(S.settings, p).name),
   );
+}
+
+/**
+ * Risk factor codes in words in the screen language, with the admission
+ * form's labels (fm.risk.*, js/i18n/forms.js); a code with no label is shown
+ * as stored. '' for none. Pure: exported for the tests.
+ */
+export function riskFactorsText(codes) {
+  return (codes || []).map(code => {
+    const key = 'fm.risk.' + code;
+    const words = t(key);
+    return words === key ? String(code) : words; // t() returns the key itself when no language has it
+  }).join(', ');
 }
 
 /** The admission exam in one line; descent and presentation only when recorded. Pure: exported for the tests. */
