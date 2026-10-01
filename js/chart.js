@@ -33,7 +33,7 @@ import { APP_TZ } from './ui.js';
 import {
   HOUR, RED, INK, MUTED, esc, clamp, n1, own, live, idAttr, finite, hhmm, txt, ln, urineText,
   ALERT_CODES, ackIndex, flagState, ring, FHR_BAND, offBand, offScaleStacks, chartEnd, afterBirth,
-  partographSVG, PARTO_LEGEND, printHead, notesAppendix,
+  partographSVG, PARTO_LEGEND, printHead, notesAppendix, planText,
 } from './partograph.js';
 
 export const SHEET_HOURS = 12; // the form: "if labour extends beyond 12h, continue on a new LCG" (F6)
@@ -362,24 +362,36 @@ function alertColumn(ctx) {
   return s;
 }
 
-/** Section 1 of the form, in one line. */
+// Risk factors in short clinical words for the one-line header (the full
+// words are on the case summary and the referral note).
+const RISK_SHORT = {
+  prior_cs: 'Previous CS', grand_multi: 'Grand multipara', multiple: 'Multiple pregnancy',
+  malpresentation: 'Malpresentation', aph: 'APH', preeclampsia: 'Pre-eclampsia/HTN', anaemia: 'Anaemia',
+  diabetes: 'Diabetes', hiv: 'HIV positive', young: 'Age < 18', short: 'Height < 150 cm', preterm: 'Preterm',
+};
+const riskShort = r => (own(RISK_SHORT, r) ? RISK_SHORT[r] : String(r).replace(/_/g, ' '));
+
+/**
+ * Section 1 of the form, in one line from the page edge, cut at 220
+ * characters; the risk factors come last, as on the WHO form.
+ */
 function headLine(p) {
   const rom = p.romUnknown ? 'U (time unknown)' : p.romTime ? dayTime(p.romTime) : 'not recorded';
-  const risks = (p.riskFactors || []).map(r => String(r).replace(/_/g, ' ')).join(', ') || 'none recorded';
+  const risks = (p.riskFactors || []).map(riskShort).join(', ') || 'none recorded';
   const line = [
     `Parity G${p.gravida ?? '?'} P${p.para ?? '?'}`,
     `Labour onset: ${own(ONSET_LBL, p.onsetMode) ? ONSET_LBL[p.onsetMode] : 'not recorded'}`,
     `Active labour diagnosis: ${p.activeStartTime ? dayTime(p.activeStartTime) : 'not yet'}`,
     `Ruptured membranes: ${rom}`, `Risk factors: ${risks}`,
   ].join('  |  ');
-  return line.length > 180 ? line.slice(0, 177) + '...' : line;
+  return line.length > 220 ? line.slice(0, 217) + '...' : line;
 }
 
 function headings(ctx) {
   const { pre, first, sec } = ctx;
   const st = ROW.stage.y + 9.5, tm = ROW.time.y + 8.8, hr = ROW.hours.y + 8.8;
   const time = { size: 7, cls: 'col-time' }, hour = { size: 7.5, weight: 700, cls: 'col-hour', fill: MUTED };
-  let s = txt(GX, 11, headLine(ctx.p), { size: 7.4, anchor: 'start' })
+  let s = txt(G.pad, 11, headLine(ctx.p), { size: 7.4, anchor: 'start' })
     + txt(ctx.W - G.pad, 11, `Sheet ${ctx.sheet} of ${ctx.n}`, { size: 8, anchor: 'end', weight: 700 });
   if (pre) {
     s += txt((pre.x0 + pre.x1) / 2, st, pre.cols > 1 ? 'LATENT / ADMISSION' : 'LATENT', { size: 6.8, weight: 700, fill: MUTED });
@@ -607,7 +619,7 @@ function textRows(ctx) {
   return spanRow(ROW.medicine, kind('medicine'), m => m.detail, 'med-text')
     + spanRow(ROW.ivfluid, kind('ivfluid'), m => m.detail || 'Y', 'iv-text')
     + spanRow(ROW.assessment, ctx.notes, n => n.text, 'note-text')
-    + spanRow(ROW.plan, ctx.notes, n => n.plan, 'plan-text');
+    + spanRow(ROW.plan, ctx.notes, planText, 'plan-text');
 }
 
 /** Initials per hour column (F3); "?" marks an entry recorded without initials. */

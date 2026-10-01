@@ -11,7 +11,7 @@ import {
 } from '../js/indicators.js';
 import { auditCase } from '../js/audit.js';
 import { getProtocol } from '../js/protocol.js';
-import { EC_MONTHS_AM } from '../js/ethiopic.js';
+import { EC_MONTHS_AM, EC_ERA } from '../js/ethiopic.js';
 import { NOW, iso, mkPatient, LCG } from './helpers.mjs';
 
 // ------------------------------------------------------------- Robson ----
@@ -250,7 +250,8 @@ test('the Ethiopian calendar span of a Gregorian month, also across the EC new y
   assert.equal(ecMonthSpan(2026, 6), 'Ginbot 24 - Sene 23, 2018 EC');
   assert.equal(ecMonthSpan(2026, 9), 'Nehase 26, 2018 - Meskerem 20, 2019 EC', 'Pagume falls inside September');
   assert.equal(ecMonthSpan(2026, 12), 'Hidar 22 - Tahsas 22, 2019 EC');
-  assert.equal(ecMonthSpan(2026, 6, 'am'), `${EC_MONTHS_AM[8]} 24 - ${EC_MONTHS_AM[9]} 23, 2018 EC`);
+  assert.equal(ecMonthSpan(2026, 6, 'am'), `${EC_MONTHS_AM[8]} 24 - ${EC_MONTHS_AM[9]} 23, 2018 ${EC_ERA.am}`);
+  assert.ok(!ecMonthSpan(2026, 6, 'am').includes('EC'), 'Amharic screens never show EC');
 });
 
 test('a birth at 01:30 EAT on 1 July counts in July, not in June', () => {

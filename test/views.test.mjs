@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { birthProblem } from '../js/views/delivery.js';
 import { admissionProblem } from '../js/views/admission.js';
-import { referralRecord, transportText, riskText, givenMeds, medLine } from '../js/views/referral.js';
+import { referralRecord, transportText, riskText, givenMeds, medLine, buildShareText } from '../js/views/referral.js';
 import { recordTypes, admissionExamText, canClose, closeFields } from '../js/views/patient.js';
 import { applyBirth, applyObservations, voidObservation, voidDelivery } from '../js/record.js';
 import { postpartumBPCount, urinePassedSinceBirth, LIMITS } from '../js/protocol.js';
@@ -258,4 +258,14 @@ test('referral note: medication lines name the kind in English and carry the oxy
   assert.equal(medLine({ kind: 'medicine', detail: '' }), 'Medicine: -');
   assert.equal(medLine({ kind: 'oxytocin', detail: '', oxyUL: 2.5, oxyDrops: 10, action: 'start' }), 'Oxytocin: 2.5 U/L, 10 drops/min');
   assert.equal(medLine({ kind: 'oxytocin', detail: 'Oxytocin STOPPED', action: 'stop' }), 'Oxytocin: Oxytocin STOPPED');
+}));
+
+test('referral share text: risk factors and what was given are in words, never codes', () => inEachLanguage(() => {
+  const form = { selected: new Set(['preeclampsia']), checks: { mgso4: true, called: true }, otherReason: '', facility: 'Hospital', phone: '', transport: 'private' };
+  const p = mkPatient({ name: 'Test', age: 24, riskFactors: ['prior_cs'], referral: referralRecord(form, { by: 'EF', referredBy: 'Sr A', time: iso(0) }) });
+  const text = buildShareText(p, { facilityName: 'HC' });
+  assert.ok(text.includes('Risk factors: Previous caesarean section'), text);
+  assert.ok(text.includes('MgSO'), text);
+  assert.ok(!/Given \/ done: [a-z_]+(, |$)/m.test(text), text);
+  assert.ok(text.includes('transport: Private vehicle'), text);
 }));

@@ -23,6 +23,8 @@ import {
 import { FLAG, urineGrade, isSupine } from './alerts.js';
 import { APP_TZ, eatDate } from './ui.js';
 import { formatEthiopic } from './ethiopic.js';
+import { isAckNote } from './audit.js';
+import { en as wizardEN } from './i18n/wizard.js';
 
 export const HOUR = 3600000;
 const MINUTE = 60000;
@@ -44,6 +46,17 @@ export const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 export const live = list => (list || []).filter(e => e && !e.voided);
 export const idAttr = id => (id ? ` data-id="${esc(id)}"` : '');
 export const finite = list => list.filter(Number.isFinite);
+
+/**
+ * A note's plan as the chart writes it. An acknowledgement note stores the
+ * action as a code ('senior'); the chart, in English like the paper form,
+ * writes it in words ('Senior/colleague called'). Typed plans are unchanged.
+ */
+export function planText(n) {
+  if (!n || n.plan == null || n.plan === '') return '';
+  const action = isAckNote(n) ? wizardEN['wz.act_' + n.plan] : null;
+  return action || String(n.plan);
+}
 
 const CLOCK = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: APP_TZ };
 export const hhmm = t => new Date(t).toLocaleTimeString('en-GB', CLOCK);
@@ -473,7 +486,7 @@ export function notesAppendix(p, settings, now) {
   let html = `<section class="print-notes">${printHead(p, settings, ['Appendix', 'notes and medication in full'], now)}`;
   if (notes.length) {
     html += '<h3>Assessment and plan</h3>' + table('print-notes-list', ['Time', 'Initials', 'Assessment', 'Plan'],
-      notes.map(x => `<tr>${td(fullDate(x.time))}${td(x.by)}${td(x.text)}${td(x.plan)}</tr>`));
+      notes.map(x => `<tr>${td(fullDate(x.time))}${td(x.by)}${td(x.text)}${td(planText(x))}</tr>`));
   }
   if (meds.length) {
     html += '<h3>Medication</h3>' + table('print-meds-list', ['Time', 'Initials', 'Kind', 'Detail'],

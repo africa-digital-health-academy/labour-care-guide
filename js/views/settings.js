@@ -70,6 +70,8 @@ export function renderSettings() {
   // unsaved settings. Save marks it saved, so its own save rebuilds the page
   // in the new language.
   const dirty = () => { if (!page.dataset.form) page.dataset.form = 'settings'; };
+  // the description follows the standard picked, before it is saved
+  const protoNote = h('p', { class: 'muted' }, protocolSummary(s.protocol));
 
   const page = h('div', { class: 'page' },
     h('div', { class: 'card' },
@@ -87,8 +89,8 @@ export function renderSettings() {
       field(t('rp.standard'), segmented([
         { value: 'lcg', label: t('rp.std_lcg') },
         { value: 'ethiopia2021', label: t('rp.std_eth') },
-      ], s.protocol, v => { s.protocol = v; dirty(); })),
-      h('p', { class: 'muted' }, protocolSummary(s.protocol)),
+      ], s.protocol, v => { s.protocol = v; protoNote.textContent = protocolSummary(v); dirty(); })),
+      protoNote,
       h('p', { class: 'muted' }, t('rp.std_help')),
     ),
     h('div', { class: 'card' },

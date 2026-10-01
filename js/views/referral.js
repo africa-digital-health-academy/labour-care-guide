@@ -334,17 +334,18 @@ function referralNote(p) {
   return root;
 }
 
-function buildShareText(p) {
+export function buildShareText(p, settings = S.settings) {
   const r = p.referral;
   const lastExam = exams(p).slice(-1)[0];
   const lastBaby = lastObs(p, 'baby');
   return [
-    `REFERRAL ${fmtDT(r.time)} from ${S.settings.facilityName || 'health centre'}`,
+    `REFERRAL ${fmtDT(r.time)} from ${(settings && settings.facilityName) || 'health centre'}`,
     `${p.name}, ${p.age || '?'}y, G${p.gravida}P${p.para}, GA ${p.gaWeeks || '?'}wk`,
+    `Risk factors: ${riskText(p.riskFactors) || 'none recorded'}`,
     `Reason: ${r.reasons.join('; ')}${r.otherReason ? '; ' + r.otherReason : ''}`,
     lastExam ? `Exam ${fmtTime(lastExam.time)}: ${lastExam.v.dilatation}cm, descent ${lastExam.v.descent ?? '—'}/5` : '',
     lastBaby ? `FHR ${lastBaby.v.fhr}bpm` : '',
-    `Given: ${r.checklist.filter(c => c.done).map(c => c.code).join(', ') || 'see note'}`,
+    `Given / done: ${r.checklist.filter(c => c.done).map(c => c.label || c.code).join('; ') || 'see note'}`,
     `By: ${referrer(r) || '-'}, transport: ${transportText(r.transport)}`,
   ].filter(Boolean).join('\n');
 }

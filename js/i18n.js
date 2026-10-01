@@ -119,7 +119,8 @@ const am = {
   delivery: 'ወሊድ',
   referral: 'ሪፈራል',
   save: 'አስቀምጥ',
-  cancel: 'ሰርዝ',
+  // not the word for "delete / strike out": beside a void it read as the void itself
+  cancel: 'ይቅር',
   next: 'ቀጣይ',
   back: 'ተመለስ',
   skip: 'ዝለል',

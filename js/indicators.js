@@ -14,7 +14,7 @@
 import { LIMITS, getProtocol, activeObs, toMs, byTime } from './protocol.js';
 import { auditCase } from './audit.js';
 import { bloodLossTotal } from './alerts.js';
-import { toEthiopic, EC_MONTHS, EC_MONTHS_AM } from './ethiopic.js';
+import { toEthiopic, EC_MONTHS, EC_MONTHS_AM, ecEra } from './ethiopic.js';
 import { APP_TZ_OFFSET } from './ui.js';
 
 export const MONITORED_MIN_ENTRIES = 4; // v1 reporting definition of a monitored labour
@@ -388,13 +388,13 @@ export function monthLabel(year, month) {
  * The Ethiopian calendar days a Gregorian month covers, e.g. June 2026 ->
  * 'Ginbot 24 - Sene 23, 2018 EC'. A Gregorian month always spans two
  * Ethiopian months (three in September, with Pagume, and two EC years), so
- * both ends are named. lang 'am' gives the Amharic month names.
+ * both ends are named. lang 'am' gives the Amharic month names and era.
  */
 export function ecMonthSpan(year, month, lang = 'en') {
   const names = lang === 'am' ? EC_MONTHS_AM : EC_MONTHS;
   const a = toEthiopic(new Date(year, month - 1, 1));
   const b = toEthiopic(new Date(year, month, 0)); // day 0 of the next month = the last day of this one
-  const end = `${names[b.month - 1]} ${b.day}, ${b.year} EC`;
+  const end = `${names[b.month - 1]} ${b.day}, ${b.year} ${ecEra(lang)}`;
   return a.year === b.year
     ? `${names[a.month - 1]} ${a.day} - ${end}`
     : `${names[a.month - 1]} ${a.day}, ${a.year} - ${end}`;

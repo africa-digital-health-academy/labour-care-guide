@@ -88,15 +88,14 @@ function updateChip() {
 // While the UI is in Amharic, a small marker sits in the top bar on every
 // screen: the Amharic text is an unreviewed draft and alerts stay in English.
 // A tap opens the full notice in a dialog; it never navigates, so a form in
-// progress is kept. Inline style: the marker needs no stylesheet change.
-
-const DRAFT_CHIP_STYLE = 'flex:none;background:var(--c-warn-bg);color:var(--c-ink);border:0;'
-  + 'border-radius:999px;padding:4px 10px;font-weight:700;font-size:.8rem;min-height:32px;cursor:pointer';
+// progress is kept. It sits beside the clock's time (updateClock), inside the
+// width the Ethiopian date already takes, so the title keeps its room at
+// phone width (.draft-chip in css/app.css).
 
 function draftChip() {
   if (getLang() !== 'am') return null;
   return h('button', {
-    type: 'button', class: 'draft-chip', style: DRAFT_CHIP_STYLE,
+    type: 'button', class: 'draft-chip',
     title: amharicDraftNotice().join(' '), 'aria-haspopup': 'dialog', onclick: showDraftNotice,
   }, t('rp.am_draft_chip'));
 }
@@ -133,6 +132,8 @@ function render(reason = 'navigate') {
   }
   const r = route();
   shown = r;
+  // screen readers and the browser's own spelling and font choices follow the screen language
+  document.documentElement.lang = getLang() === 'am' ? 'am' : 'en';
   clear(app);
 
   const clockEl = h('div', { class: 'clock' });
@@ -148,7 +149,6 @@ function render(reason = 'navigate') {
       : null,
     h('button', { class: 'btn-home', title: t('dashboard'), 'aria-label': t('dashboard'), onclick: goHome }, '🤰'),
     h('h1', { class: 'brand-title', title: t('dashboard'), onclick: goHome }, titleFor(r)),
-    draftChip(),
     activateUpdate ? updateChip() : null,
     clockEl,
   ));
@@ -178,6 +178,7 @@ function updateClock(el) {
   el.innerHTML = '';
   el.append(
     now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: APP_TZ }),
+    draftChip(),
     S.settings.ethiopianDates ? h('span', { class: 'ec' }, formatEthiopic(eatDate(now), S.settings.lang)) : '',
   );
 }

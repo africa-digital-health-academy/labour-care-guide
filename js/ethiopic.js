@@ -58,13 +58,13 @@ export function fromEthiopic(year, month, day) {
   return new Date(year_, month_ - 1, day_);
 }
 
-/**
- * Format like "Sene 5, 2018 EC"; in Amharic the month is Amharic and the era
- * is written as Amharic writes it (Amete Mihret, abbreviated).
- */
+/** The era after an Ethiopian year: EC in English, Amete Mihret abbreviated in Amharic. */
+export const EC_ERA = Object.freeze({ en: 'EC', am: 'ዓ.ም.' });
+export const ecEra = lang => (lang === 'am' ? EC_ERA.am : EC_ERA.en);
+
+/** Format like "Sene 5, 2018 EC"; in Amharic, Amharic month names and era. */
 export function formatEthiopic(date, lang = 'en') {
   const e = toEthiopic(date);
-  const am = lang === 'am';
-  const months = am ? EC_MONTHS_AM : EC_MONTHS;
-  return `${months[e.month - 1]} ${e.day}, ${e.year} ${am ? 'ዓ.ም.' : 'EC'}`;
+  const months = lang === 'am' ? EC_MONTHS_AM : EC_MONTHS;
+  return `${months[e.month - 1]} ${e.day}, ${e.year} ${ecEra(lang)}`;
 }
