@@ -292,7 +292,7 @@ export const am = {
   'wz.med_medicine': 'መድኃኒት',
   'wz.med_ivfluid': 'IV ፈሳሽ',
   'wz.med_oxytocin': 'ኦክሲቶሲን',
-  'wz.oxy_scope': 'በኢትዮጵያ ምጥን በኦክሲቶሲን ማፋጠን (augmentation) የሆስፒታል ደረጃ ውሳኔ ነው። በጤና ጣቢያ ደረጃ ኦክሲቶሲንን ለAMTSL/PPH ብቻ ይጠቀሙ፤ በጤና ሚኒስቴር (MOH) ፕሮቶኮል መሠረት።',
+  // wz.oxy_scope stays English: a clinical scope instruction, not shown in draft Amharic before the clinical panel validates it
   'wz.oxy_ul': 'ዩኒት በሊትር',
   'wz.oxy_drops': 'ጠብታ/ደቂቃ',
   'wz.med_need_detail': 'መድኃኒቱን፣ መጠኑን እና የአሰጣጥ መንገዱን ያስገቡ።',

@@ -47,9 +47,19 @@ const INTRAUTERINE_RESUS = [
   'Stop oxytocin if running',
   'Re-check FHR in 5–15 minutes, listen through a contraction + 30 s after',
 ];
+/**
+ * MgSO4 loading dose (Pritchard regimen: 4 g of the 20% solution IV, then
+ * 10 g of the 50% solution IM, 5 g in each buttock with 1 ml of 2% lidocaine
+ * in the same syringe; MOH 2021, WHO MCPC). One source for the severe
+ * hypertension alert, the eclampsia card and the pre-referral checklist; a
+ * drug dose, so it stays in English in every language until the clinical
+ * panel validates a translation. PANEL-TO-CONFIRM: wording and IV duration.
+ */
+export const MGSO4_LOADING = '4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 ml lidocaine 2%)';
+
 const SEVERE_HTN = [
   'Check urine protein NOW', 'Severe pre-eclampsia until proven otherwise',
-  'Give MgSO₄ loading dose BEFORE referral: 4 g IV (20%) slowly over 5–20 min + 10 g IM (5 g each buttock)',
+  'Give MgSO₄ loading dose BEFORE referral: ' + MGSO4_LOADING,
   'Give antihypertensive per protocol if available', 'REFER urgently — call ahead',
 ];
 
@@ -859,13 +869,6 @@ export function reopenWhere(p, test) {
 // Protocol for Health Centers 2021 / BEmONC; PPH per the 2025 WHO/FIGO/ICM
 // guidelines.
 // ------------------------------------------------------------------------
-
-/**
- * MgSO4 loading dose (Pritchard regimen, MOH 2021). One source for the
- * eclampsia card and the pre-referral checklist; a drug dose, so it stays in
- * English in every language until the clinical panel validates a translation.
- */
-export const MGSO4_LOADING = '4 g IV (20%) over 5–20 min + 10 g IM (5 g each buttock with 1 ml lidocaine 2%)';
 
 export const EMERGENCIES = [
   {

@@ -138,9 +138,14 @@ function initials(p, b) {
  * hourly column. The note an alert acknowledgement writes (kind 'ack')
  * records the action taken on that alert, not a decision made with the
  * woman, so it never fills a column; voided notes never count either.
+ * Acknowledgement notes saved before M5 carry no kind; their fixed opening
+ * words identify them.
  */
+const ACK_NOTE_PREFIX = 'Alerts acknowledged:';
+export const isAckNote = n => !!n && (n.kind === 'ack' || String(n.text || '').startsWith(ACK_NOTE_PREFIX));
+
 function decisions(p, b) {
-  const times = (p.notes || []).filter(n => !n.voided && n.kind !== 'ack' && (n.text || n.plan)).map(n => toMs(n.time));
+  const times = (p.notes || []).filter(n => !n.voided && !isAckNote(n) && (n.text || n.plan)).map(n => toMs(n.time));
   const w = windows(times, b.start, b.end, 60, b.ongoing);
   return { windows: w.total, met: w.met, rate: rateOf(w.met, w.total) };
 }

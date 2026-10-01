@@ -93,7 +93,10 @@ export function hadCompanion(p, stage) {
  * Her second stage is on the record (full dilatation documented). A woman
  * delivered by caesarean in the first stage never had one, and without the
  * start of the second stage no companion record can be placed in it, so
- * only these women make the denominator of the second-stage figure.
+ * only these women make the denominator of the second-stage figure: it reads
+ * "women with a documented second stage". A vaginal birth that came before
+ * any 10 cm exam is left out too; the figure reports how many women who
+ * wanted a companion were left out (withoutDocumentedSecond).
  */
 function reachedSecondStage(p) {
   return !!p.secondStageStart;
@@ -220,7 +223,13 @@ export function computeIndicators(cases, { from = null, to = null, settings = {}
     lcgUse: ratio(lcgDone, D),
     fhrOnAdmission: ratio(births.filter(fhrOnAdmission).length, D),
     bpOnAdmission: ratio(births.filter(bpOnAdmission).length, D),
-    companion: { ...ratio(had, wanted), unknown, byStage: { first: ratio(hadFirst, wanted), second: ratio(hadSecond, wantedSecond) } },
+    companion: {
+      ...ratio(had, wanted), unknown,
+      byStage: {
+        first: ratio(hadFirst, wanted),
+        second: { ...ratio(hadSecond, wantedSecond), withoutDocumentedSecond: wanted - wantedSecond },
+      },
+    },
     caesarean: { ...ratio(births.filter(p => p.delivery.mode === 'cs').length, D), robson },
     stillbirths: { ...ratio(sb.length, counted.length), ...split },
   };

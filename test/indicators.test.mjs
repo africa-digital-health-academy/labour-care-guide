@@ -129,8 +129,10 @@ test('M5: second-stage companion figure: the denominator is the women who wanted
   assert.deepEqual([c.byStage.first.n, c.byStage.first.d], [3, 3]);
   assert.deepEqual([c.byStage.second.n, c.byStage.second.d], [1, 2], 'the first-stage caesarean is in neither part of the figure');
   assert.equal(c.byStage.second.rate, 0.5);
+  assert.equal(c.byStage.second.withoutDocumentedSecond, 1, 'the woman left out of the second-stage figure is counted');
   const none = computeIndicators([csFirst], { ...JUNE, settings: LCG, now: NOW }).companion.byStage.second;
   assert.deepEqual([none.n, none.d, none.rate], [0, 0, null], 'nobody reached a second stage: no rate, never 0 %');
+  assert.equal(none.withoutDocumentedSecond, 1);
 });
 
 test('companion wish: the explicit answer wins; Y = wanted, D = declined, N alone = unknown', () => {

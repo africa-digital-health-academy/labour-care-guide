@@ -21,6 +21,7 @@
 import { h, field, segmented, toast, fmtDT, fmtTime, byField, promptDialog } from '../ui.js';
 import { t, getLang } from '../i18n.js';
 import { en as formsEN } from '../i18n/forms.js';
+import { en as wizardEN } from '../i18n/wizard.js';
 import { S, savePatient, getBy, setBy } from '../store.js';
 import { LIMITS, lastObs, exams, stageOf, isLabouring, inPostpartumWatch } from '../protocol.js';
 import { recordEvent, applyReferral } from '../record.js';
@@ -91,6 +92,18 @@ export const transportText = code => (TRANSPORT_KEY[code] && formsEN[TRANSPORT_K
 export const riskText = codes => (codes || []).map(c => formsEN['fm.risk.' + c] || c).join(', ');
 // a medication entry voided as recorded in error was never given
 export const givenMeds = p => (p.meds || []).filter(m => m && !m.voided);
+
+/** One medication line of the note, in English: the kind in words, and an oxytocin rate when recorded. */
+export function medLine(m) {
+  const label = wizardEN['wz.med_' + m.kind] || m.kind || wizardEN['wz.med_medicine'];
+  const parts = [];
+  if (m.detail) parts.push(String(m.detail));
+  if (m.kind === 'oxytocin' && m.action !== 'stop') {
+    const rate = [m.oxyUL != null ? `${m.oxyUL} U/L` : '', m.oxyDrops != null ? `${m.oxyDrops} drops/min` : ''].filter(Boolean).join(', ');
+    if (rate) parts.push(rate);
+  }
+  return `${label}: ${parts.join(' - ') || '-'}`;
+}
 
 /**
  * The referral record built from the form. form: { selected (Set of reason
@@ -298,7 +311,7 @@ function referralNote(p) {
       h('h3', null, 'Pre-referral treatment given'),
       h('ul', null, r.checklist.map(c => h('li', null, (c.done ? '☑ ' : '☐ NOT DONE — ') + c.label))),
       h('h3', null, 'Medication in labour'),
-      h('ul', null, givenMeds(p).map(mm => h('li', null, `${fmtTime(mm.time)} — ${mm.kind}: ${mm.detail || ''}`)),
+      h('ul', null, givenMeds(p).map(mm => h('li', null, `${fmtTime(mm.time)} — ${medLine(mm)}`)),
         givenMeds(p).length ? null : h('li', null, 'None recorded')),
       h('hr'),
       kv('Referred by', referrer(r) || '________________'),

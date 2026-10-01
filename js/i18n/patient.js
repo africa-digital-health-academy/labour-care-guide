@@ -59,7 +59,7 @@ const STRINGS = {
   'pt.chip_active': ['Active: {d}', 'ንቁ ምጥ: {d}'],
   'pt.chip_second': ['2nd stage: {d}', '2ኛ ምዕራፍ: {d}'],
   'pt.chip_pushing': ['Pushing since {time} ({d})', 'ማማጥ ከ{time} ጀምሮ ({d})'],
-  'pt.chip_rom': ['ROM: {d}', 'ROM ከሆነ {d}'],
+  'pt.chip_rom': ['ROM: {d}', 'ROM ከተከሰተ {d} ሆኗል'],
   'pt.chip_rom_unknown': ['ROM: time unknown', 'ROM: ጊዜው አይታወቅም'],
   'pt.chip_oxytocin': ['oxytocin running', 'ኦክሲቶሲን እየተሰጠ ነው'],
   'pt.record_check': ['Record check', 'ክትትል መዝግብ'],

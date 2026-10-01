@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { birthProblem } from '../js/views/delivery.js';
 import { admissionProblem } from '../js/views/admission.js';
-import { referralRecord, transportText, riskText, givenMeds } from '../js/views/referral.js';
+import { referralRecord, transportText, riskText, givenMeds, medLine } from '../js/views/referral.js';
 import { recordTypes, admissionExamText, canClose, closeFields } from '../js/views/patient.js';
 import { applyBirth, applyObservations, voidObservation, voidDelivery } from '../js/record.js';
 import { postpartumBPCount, urinePassedSinceBirth, LIMITS } from '../js/protocol.js';
@@ -116,7 +116,7 @@ test('referral record: reasons and checklist labels are stored in English whatev
     ['iv', 'fluids', 'mgso4', 'antihtn', 'catheter', 'position', 'called', 'ambulance', 'escort', 'family']);
   const label = code => r.checklist.find(c => c.code === code).label;
   // the dose text is clinical: it must never change by accident
-  assert.equal(label('mgso4'), 'MgSO₄ loading dose given — 4 g IV (20%) over 5–20 min + 10 g IM (5 g each buttock with 1 ml lidocaine 2%)');
+  assert.equal(label('mgso4'), 'MgSO₄ loading dose given — 4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 ml lidocaine 2%)');
   assert.equal(label('antihtn'), `Antihypertensive given (if BP ≥ ${LIMITS.sys.severe}/${LIMITS.dia.severe})`);
   assert.equal(label('iv'), 'IV line secured (16–18G)');
   assert.deepEqual(r.checklist.filter(c => c.done).map(c => c.code), ['mgso4']);
@@ -251,4 +251,11 @@ test('referral note: stored codes are written as English labels, voided medicati
   const p = { meds: [{ kind: 'oxytocin', detail: '10 IU' }, { kind: 'mgso4', detail: 'typo', voided: { by: 'TE' } }] };
   assert.deepEqual(givenMeds(p).map(m => m.kind), ['oxytocin']);
   assert.deepEqual(givenMeds({}), []);
+}));
+
+test('referral note: medication lines name the kind in English and carry the oxytocin rate', () => inEachLanguage(() => {
+  assert.equal(medLine({ kind: 'ivfluid', detail: 'RL 1 L' }), 'IV fluids: RL 1 L');
+  assert.equal(medLine({ kind: 'medicine', detail: '' }), 'Medicine: -');
+  assert.equal(medLine({ kind: 'oxytocin', detail: '', oxyUL: 2.5, oxyDrops: 10, action: 'start' }), 'Oxytocin: 2.5 U/L, 10 drops/min');
+  assert.equal(medLine({ kind: 'oxytocin', detail: 'Oxytocin STOPPED', action: 'stop' }), 'Oxytocin: Oxytocin STOPPED');
 }));

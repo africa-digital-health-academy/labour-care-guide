@@ -1,7 +1,7 @@
 // Per-case LCG audit (N2, WHO LCG implementation package Annex 8).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { auditCase } from '../js/audit.js';
+import { auditCase, isAckNote } from '../js/audit.js';
 import { PROTOCOLS } from '../js/protocol.js';
 import { NOW, mkPatient } from './helpers.mjs';
 
@@ -148,4 +148,16 @@ test('acknowledgement notes (kind ack) never fill a shared decision-making colum
   a = auditCase(p, PROTOCOLS.lcg, NOW);
   assert.deepEqual([a.sections.decisions.met, a.sections.decisions.windows], [1, 4]);
   assert.deepEqual([a.sections.initials.met, a.sections.initials.windows], [5, 5], 'signed acknowledgement notes still count as signed entries');
+});
+
+test('acknowledgement notes saved before M5 (no kind) are recognised by their opening words', () => {
+  const p = lcgCase();
+  p.notes = [10, 70].map(m => ({ time: at(m), by: 'TE', text: 'Alerts acknowledged: FHR 165 bpm - outside normal range', plan: 'monitoring' }));
+  p.notes.push({ time: at(130), by: 'TE', text: 'Assessment: alerts acknowledged earlier, progress now normal', plan: 'Reassess' });
+  const a = auditCase(p, PROTOCOLS.lcg, NOW);
+  assert.deepEqual([a.sections.decisions.met, a.sections.decisions.windows], [1, 4], 'only the real assessment counts');
+  assert.equal(isAckNote({ text: 'Alerts acknowledged: x' }), true);
+  assert.equal(isAckNote({ kind: 'ack', text: '' }), true);
+  assert.equal(isAckNote({ text: 'Progress normal' }), false);
+  assert.equal(isAckNote(null), false);
 });
