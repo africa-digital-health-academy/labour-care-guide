@@ -3,14 +3,16 @@
 // this board answers "who needs me right now?" at a glance. Women in the
 // postpartum watch after birth (N4) have their own section with the same due
 // chips. Alert badges count only alerts that are open AND unacknowledged.
+// Every string shown goes through t() ('pt.' keys, js/i18n/patient.js).
 
-import { h, durationSince } from '../ui.js';
+import { h } from '../ui.js';
 import { t } from '../i18n.js';
 import { S } from '../store.js';
 import {
-  getProtocol, dueList, stageOf, isLabouring, awaitingHandover, monitoringStage, inPostpartumWatch, birthTime, fmtMin,
+  getProtocol, dueList, stageOf, isLabouring, awaitingHandover, monitoringStage, inPostpartumWatch, birthTime,
 } from '../protocol.js';
 import { seedDemoPatient } from '../demo.js';
+import { sinceText, minText, metaLine } from './patient.js';
 
 const RECENT_MS = 48 * 3600000; // "Recent" list window (display only)
 
@@ -26,16 +28,16 @@ export function renderDashboard() {
   if (!labouring.length && !watch.length && !recent.length) {
     page.append(h('div', { class: 'empty-state' },
       h('div', { class: 'ico' }, '🤱'),
-      h('p', null, 'No women in labour are being monitored.'),
+      h('p', null, t('pt.board_empty')),
       h('button', { class: 'btn big', onclick: () => { location.hash = '#/new'; } }, '＋ ' + t('new_admission')),
-      h('button', { class: 'btn ghost', style: 'margin-top:10px', onclick: () => seedDemoPatient() }, 'Load a demo case (for training/evaluation)'),
+      h('button', { class: 'btn ghost', style: 'margin-top:10px', onclick: () => seedDemoPatient() }, t('pt.load_demo')),
     ));
     page.append(supportFooter());
     return page;
   }
 
   if (labouring.length) {
-    page.append(h('h2', { style: 'margin:4px 0 10px' }, `${t('dashboard')} — ${labouring.length} in labour`));
+    page.append(h('h2', { style: 'margin:4px 0 10px' }, `${t('dashboard')} — ${t('pt.board_in_labour', { n: labouring.length })}`));
     for (const p of sortByUrgency(labouring, now)) page.append(patientCard(p, now));
   }
   if (watch.length) {
@@ -45,7 +47,7 @@ export function renderDashboard() {
     ));
   }
   if (recent.length) {
-    page.append(h('h2', { style: 'margin:18px 0 10px' }, 'Recent (48 h)'));
+    page.append(h('h2', { style: 'margin:18px 0 10px' }, t('pt.board_recent', { h: RECENT_MS / 3600000 })));
     for (const p of recent) page.append(patientCard(p, now));
   }
   page.append(supportFooter());
@@ -54,14 +56,15 @@ export function renderDashboard() {
 }
 
 // Hard-coded support / implementation contact, shown on the home (ward board).
+// The name is the link, between the words before and after it.
 function supportFooter() {
   return h('div', { class: 'support-note no-print' },
-    h('span', null, '🤝 For support or implementation, reach out to '),
+    h('span', null, `🤝 ${t('pt.support_before')} `),
     h('a', {
       href: 'https://www.linkedin.com/in/dr-temesgen-endalew/',
       target: '_blank', rel: 'noopener noreferrer',
-    }, 'Dr Temesgen Endalew'),
-    h('span', null, ' (LinkedIn)'),
+    }, t('pt.support_name')),
+    h('span', null, ` ${t('pt.support_after')}`),
   );
 }
 
@@ -100,9 +103,13 @@ export function patientCard(p, now = new Date()) {
   chips.push(h('span', { class: 'chip stage' }, t('stage_' + stageOf(p))));
   // S8: a referred woman still on the ward keeps her labour stage and clocks
   if (awaitingHandover(p)) chips.push(h('span', { class: 'chip stage' }, t('stage_' + stage)));
-  if (labouring && stage === 'active' && p.activeStartTime) chips.push(h('span', { class: 'chip' }, '⏱ active ' + durationSince(p.activeStartTime, now)));
-  if (labouring && stage === 'second' && p.secondStageStart) chips.push(h('span', { class: 'chip stage' }, '⏱ 2nd ' + durationSince(p.secondStageStart, now)));
-  if (watch) chips.push(h('span', { class: 'chip pp' }, `${t('postpartum_watch')} - ${durationSince(birthTime(p), now)} since birth`));
+  if (labouring && stage === 'active' && p.activeStartTime) {
+    chips.push(h('span', { class: 'chip' }, '⏱ ' + t('pt.card_active', { d: sinceText(p.activeStartTime, now) })));
+  }
+  if (labouring && stage === 'second' && p.secondStageStart) {
+    chips.push(h('span', { class: 'chip stage' }, '⏱ ' + t('pt.card_second', { d: sinceText(p.secondStageStart, now) })));
+  }
+  if (watch) chips.push(h('span', { class: 'chip pp' }, `${t('postpartum_watch')} - ${t('pt.since_birth', { d: sinceText(birthTime(p), now) })}`));
   if (unackDanger.length) chips.push(h('span', { class: 'chip overdue' }, `🚨 ${unackDanger.length} ${t('alert_act')}`));
   else if (unackWarn.length) chips.push(h('span', { class: 'chip due' }, `⚠ ${unackWarn.length} ${t('alert_review')}`));
 
@@ -112,13 +119,16 @@ export function patientCard(p, now = new Date()) {
   }
   if ((labouring || watch) && !due.some(d => d.state !== 'ok') && !unackDanger.length && !unackWarn.length) {
     const nextDue = due.length ? due.reduce((a, b) => (a.dueAt < b.dueAt ? a : b)) : null;
-    chips.push(h('span', { class: 'chip ok' }, '✓ ' + t('all_done') + (nextDue ? ` · next: ${t(nextDue.type)} ${fmtMin(Math.max(0, (new Date(nextDue.dueAt) - now) / 60000))}` : '')));
+    const next = nextDue
+      ? ' · ' + t('pt.card_next', { what: t(nextDue.type), d: minText(Math.max(0, (new Date(nextDue.dueAt) - now) / 60000)) })
+      : '';
+    chips.push(h('span', { class: 'chip ok' }, '✓ ' + t('all_done') + next));
   }
 
   return h('button', { class: ['pt-card', cls, watch ? 'pp-watch' : ''].filter(Boolean).join(' '), onclick: () => { location.hash = '#/p/' + p.id; } },
     h('div', { class: 'row1' },
-      h('span', { class: 'name' }, p.name || 'Unnamed'),
-      h('span', { class: 'meta' }, `${p.age || '?'} y · G${p.gravida ?? '?'}P${p.para ?? '?'} · GA ${p.gaWeeks || '?'} wk${p.mrn ? ' · MRN ' + p.mrn : ''}`),
+      h('span', { class: 'name' }, p.name || t('pt.unnamed')),
+      h('span', { class: 'meta' }, metaLine(p) + (p.mrn ? ' · ' + t('pt.mrn', { mrn: p.mrn }) : '')),
     ),
     h('div', { class: 'chips' }, chips),
   );

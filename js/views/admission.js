@@ -7,9 +7,14 @@
 // record.admissionEntries); labour onset, the presentation, the rupture time
 // or U = unknown and the companion answer are asked, never assumed (F4); every
 // entry carries the initials of the person admitting (F3).
+//
+// M5: every label goes through t() ('fm.' keys in js/i18n/forms.js). The
+// stored values stay codes; the admission alert quotes the risk factors in
+// English, like every alert title and advice (the alerts are not translated).
 
 import { h, field, segmented, toast, byField, isoToLocalInput, localInputToISO } from '../ui.js';
 import { t } from '../i18n.js';
+import { en as formsEN } from '../i18n/forms.js';
 import { S, savePatient, uid, getBy, setBy } from '../store.js';
 import { getProtocol } from '../protocol.js';
 import { addAlerts, admissionRiskAlerts, FLAG } from '../alerts.js';
@@ -19,56 +24,67 @@ import { showAlertAckModal } from '../wizard.js';
 // Country dial codes — Ethiopia (+251) first and default; neighbours and common
 // diaspora destinations follow. (Flag emoji show as country letters on Windows.)
 const COUNTRY_CODES = [
-  ['+251', '🇪🇹', 'Ethiopia'],
-  ['+254', '🇰🇪', 'Kenya'],
-  ['+252', '🇸🇴', 'Somalia'],
-  ['+291', '🇪🇷', 'Eritrea'],
-  ['+253', '🇩🇯', 'Djibouti'],
-  ['+211', '🇸🇸', 'South Sudan'],
-  ['+249', '🇸🇩', 'Sudan'],
-  ['+256', '🇺🇬', 'Uganda'],
-  ['+255', '🇹🇿', 'Tanzania'],
-  ['+250', '🇷🇼', 'Rwanda'],
-  ['+20', '🇪🇬', 'Egypt'],
-  ['+27', '🇿🇦', 'South Africa'],
-  ['+234', '🇳🇬', 'Nigeria'],
-  ['+971', '🇦🇪', 'UAE'],
-  ['+966', '🇸🇦', 'Saudi Arabia'],
-  ['+1', '🇺🇸', 'USA / Canada'],
-  ['+44', '🇬🇧', 'UK'],
-  ['+91', '🇮🇳', 'India'],
+  ['+251', '🇪🇹', 'fm.country.ET'],
+  ['+254', '🇰🇪', 'fm.country.KE'],
+  ['+252', '🇸🇴', 'fm.country.SO'],
+  ['+291', '🇪🇷', 'fm.country.ER'],
+  ['+253', '🇩🇯', 'fm.country.DJ'],
+  ['+211', '🇸🇸', 'fm.country.SS'],
+  ['+249', '🇸🇩', 'fm.country.SD'],
+  ['+256', '🇺🇬', 'fm.country.UG'],
+  ['+255', '🇹🇿', 'fm.country.TZ'],
+  ['+250', '🇷🇼', 'fm.country.RW'],
+  ['+20', '🇪🇬', 'fm.country.EG'],
+  ['+27', '🇿🇦', 'fm.country.ZA'],
+  ['+234', '🇳🇬', 'fm.country.NG'],
+  ['+971', '🇦🇪', 'fm.country.AE'],
+  ['+966', '🇸🇦', 'fm.country.SA'],
+  ['+1', '🇺🇸', 'fm.country.US'],
+  ['+44', '🇬🇧', 'fm.country.GB'],
+  ['+91', '🇮🇳', 'fm.country.IN'],
 ];
 
+// [stored code, i18n key, hospital-level birth]
 const RISK_FACTORS = [
-  ['prior_cs', 'Previous caesarean section', true],
-  ['grand_multi', 'Grand multipara (≥5 births)', false],
-  ['multiple', 'Multiple pregnancy (twins+)', true],
-  ['malpresentation', 'Known malpresentation', true],
-  ['aph', 'Bleeding this pregnancy (APH)', true],
-  ['preeclampsia', 'Pre-eclampsia / hypertension', false],
-  ['anaemia', 'Anaemia', false],
-  ['diabetes', 'Diabetes', false],
-  ['hiv', 'HIV positive', false],
-  ['young', 'Age below 18', false],
-  ['short', 'Height < 150 cm', false],
-  ['preterm', 'Preterm (< 37 weeks)', false],
+  ['prior_cs', 'fm.risk.prior_cs', true],
+  ['grand_multi', 'fm.risk.grand_multi', false],
+  ['multiple', 'fm.risk.multiple', true],
+  ['malpresentation', 'fm.risk.malpresentation', true],
+  ['aph', 'fm.risk.aph', true],
+  ['preeclampsia', 'fm.risk.preeclampsia', false],
+  ['anaemia', 'fm.risk.anaemia', false],
+  ['diabetes', 'fm.risk.diabetes', false],
+  ['hiv', 'fm.risk.hiv', false],
+  ['young', 'fm.risk.young', false],
+  ['short', 'fm.risk.short', false],
+  ['preterm', 'fm.risk.preterm', false],
 ];
+
+/** A risk factor in English, for the admission alert (alerts stay English). */
+function riskLabelEN(code) {
+  const r = RISK_FACTORS.find(x => x[0] === code);
+  return (r && formsEN[r[1]]) || code;
+}
+
+// Choice lists hold i18n keys; labelled() turns them into segmented() options
+// when the page is drawn, so the labels follow the current language.
+const labelled = opts => opts.map(({ key, ...o }) => ({ ...o, label: t(key) }));
 
 // Amniotic fluid once the membranes have ruptured (manual Table 4). 'M', v1's
 // ungraded meconium, is never offered; the alert marks come from the engine.
-const FLUID_OPTIONS = [['C', 'Clear'], ['M1', 'M+'], ['M2', 'M++'], ['M3', 'M+++ thick'], ['B', 'Blood']]
-  .map(([value, label]) => ({ value, label, alert: FLAG.liquor(value) }));
+const FLUID_OPTIONS = [['C', 'fm.liquor.C'], ['M1', 'fm.liquor.M1'], ['M2', 'fm.liquor.M2'], ['M3', 'fm.liquor.M3'], ['B', 'fm.liquor.B']]
+  .map(([value, key]) => ({ value, key, alert: FLAG.liquor(value) }));
 
 // Companion of her choice (manual Table 3): Y yes, N no (the alert value), D declines.
-const COMPANION_OPTIONS = [['Y', 'Present'], ['N', 'Wanted, not present'], ['D', 'Declines']]
-  .map(([value, label]) => ({ value, label, alert: FLAG.supportive('companion', value) }));
+const COMPANION_OPTIONS = [['Y', 'fm.companion.Y'], ['N', 'fm.companion.N'], ['D', 'fm.companion.D']]
+  .map(([value, key]) => ({ value, key, alert: FLAG.supportive('companion', value) }));
 
-const ONSET_OPTIONS = [{ value: 'spontaneous', label: 'Spontaneous' }, { value: 'induced', label: 'Induced' }];
-const MEMBRANE_OPTIONS = [{ value: 'intact', label: 'Intact' }, { value: 'ruptured', label: 'Ruptured' }];
+const ONSET_OPTIONS = [{ value: 'spontaneous', key: 'fm.onset.spontaneous' }, { value: 'induced', key: 'fm.onset.induced' }];
+const MEMBRANE_OPTIONS = [{ value: 'intact', key: 'fm.membranes.intact' }, { value: 'ruptured', key: 'fm.membranes.ruptured' }];
 // any presentation other than cephalic raises the malpresentation alert
 const PRESENTATION_OPTIONS = [
-  { value: 'cephalic', label: 'Cephalic' }, { value: 'breech', label: 'Breech', alert: true },
-  { value: 'transverse', label: 'Transverse', alert: true }, { value: 'other', label: 'Other', alert: true },
+  { value: 'cephalic', key: 'fm.presentation.cephalic' }, { value: 'breech', key: 'fm.presentation.breech', alert: true },
+  { value: 'transverse', key: 'fm.presentation.transverse', alert: true }, { value: 'other', key: 'fm.other', alert: true },
 ];
 
 /**
@@ -91,7 +107,7 @@ function optionalChoice(opts, initial, onChange) {
     if (value != null) {
       parts.push(h('button', {
         type: 'button', class: 'btn ghost', onclick: () => { value = null; onChange(null); paint(); },
-      }, 'clear'));
+      }, t('fm.adm.clear')));
     }
     wrap.replaceChildren(...parts);
   };
@@ -121,7 +137,7 @@ export function renderAdmission() {
   }, attrs));
 
   // Ruptured membranes: the time, or U = unknown (F4), and the fluid if seen.
-  const romTimeField = field('When did the membranes rupture? *', h('input', {
+  const romTimeField = field(t('fm.adm.romWhen') + ' *', h('input', {
     type: 'datetime-local', value: m.romTime, oninput: e => { m.romTime = e.target.value; },
   }));
   const romBlock = h('div', { style: 'display:none' },
@@ -131,16 +147,16 @@ export function renderAdmission() {
         type: 'checkbox',
         onchange: e => { m.romUnknown = e.target.checked; romTimeField.style.display = m.romUnknown ? 'none' : ''; },
       }),
-      'Time unknown (U) - she cannot say and there is no record')),
-    choiceField('Amniotic fluid (if seen)', optionalChoice(FLUID_OPTIONS, m.liquor, v => { m.liquor = v; })),
+      t('fm.adm.romUnknown'))),
+    choiceField(t('fm.adm.fluid'), optionalChoice(labelled(FLUID_OPTIONS), m.liquor, v => { m.liquor = v; })),
   );
 
   // Phone: country-code selector (Ethiopia default) + number; combined into m.phone.
   function syncPhone() { m.phone = m.phoneNumber.trim() ? `${m.phoneCode} ${m.phoneNumber.trim()}` : ''; }
   const phoneCodeSelect = h('select', {
-    style: 'flex:0 0 auto; width:auto; min-width:104px', 'aria-label': 'Country code',
+    style: 'flex:0 0 auto; width:auto; min-width:104px', 'aria-label': t('fm.adm.countryCode'),
     onchange: e => { m.phoneCode = e.target.value; syncPhone(); },
-  }, COUNTRY_CODES.map(([code, flag, name]) => h('option', { value: code, title: name }, `${flag} ${code}`)));
+  }, COUNTRY_CODES.map(([code, flag, key]) => h('option', { value: code, title: t(key) }, `${flag} ${code}`)));
   phoneCodeSelect.value = m.phoneCode;
   const phoneField = h('div', { style: 'display:flex; gap:8px' },
     phoneCodeSelect,
@@ -156,21 +172,21 @@ export function renderAdmission() {
       h('div', { class: 'grid2' },
         field(t('name') + ' *', input('name')),
         field(t('age'), input('age', 'number', { min: 10, max: 60 })),
-        field('MRN / card number', input('mrn')),
-        field('Phone', phoneField),
-        field('Kebele / address', input('kebele')),
+        field(t('fm.adm.mrn'), input('mrn')),
+        field(t('fm.adm.phone'), phoneField),
+        field(t('fm.adm.kebele'), input('kebele')),
       ),
     ),
     h('div', { class: 'card' },
-      h('h2', null, '2 · Obstetric history'),
+      h('h2', null, '2 · ' + t('fm.adm.history')),
       h('div', { class: 'grid3' },
         field(t('gravida') + ' *', input('gravida', 'number', { min: 1, max: 20 })),
         field(t('para') + ' *', input('para', 'number', { min: 0, max: 20 })),
-        field('GA (weeks)', input('gaWeeks', 'number', { min: 20, max: 45 })),
+        field(t('fm.adm.ga'), input('gaWeeks', 'number', { min: 20, max: 45 })),
       ),
-      h('h3', null, 'Risk factors (tick all that apply)'),
+      h('h3', null, t('fm.adm.risks')),
       h('div', { class: 'checklist' },
-        RISK_FACTORS.map(([code, label]) => h('label', null,
+        RISK_FACTORS.map(([code, key]) => h('label', null,
           h('input', {
             type: 'checkbox',
             onchange: e => {
@@ -178,44 +194,42 @@ export function renderAdmission() {
               else m.riskFactors = m.riskFactors.filter(r => r !== code);
             },
           }),
-          label,
+          t(key),
         )),
       ),
     ),
     h('div', { class: 'card' },
-      h('h2', null, '3 · Labour status'),
-      choiceField('Labour onset *', segmented(ONSET_OPTIONS, m.onsetMode, v => { m.onsetMode = v; })),
-      h('p', { class: 'muted', style: 'margin-top:-6px' },
-        'Induced: labour was started by oxytocin, prostaglandins, artificial rupture of the membranes, a balloon catheter or any other artificial means.'),
+      h('h2', null, '3 · ' + t('fm.adm.labourStatus')),
+      choiceField(t('fm.adm.onset') + ' *', segmented(labelled(ONSET_OPTIONS), m.onsetMode, v => { m.onsetMode = v; })),
+      h('p', { class: 'muted', style: 'margin-top:-6px' }, t('fm.adm.onsetHelp')),
       h('div', { class: 'grid2' },
-        field('Labour onset time (approx.)', h('input', { type: 'datetime-local', value: m.laborOnsetTime, oninput: e => { m.laborOnsetTime = e.target.value; } })),
-        field('Admission time', h('input', { type: 'datetime-local', value: m.admissionTime, oninput: e => { m.admissionTime = e.target.value; } })),
+        field(t('fm.adm.onsetTime'), h('input', { type: 'datetime-local', value: m.laborOnsetTime, oninput: e => { m.laborOnsetTime = e.target.value; } })),
+        field(t('fm.adm.admissionTime'), h('input', { type: 'datetime-local', value: m.admissionTime, oninput: e => { m.admissionTime = e.target.value; } })),
       ),
-      choiceField('Membranes *', segmented(MEMBRANE_OPTIONS, m.membranes, v => {
+      choiceField(t('fm.adm.membranes') + ' *', segmented(labelled(MEMBRANE_OPTIONS), m.membranes, v => {
         m.membranes = v;
         romBlock.style.display = v === 'ruptured' ? '' : 'none';
       })),
       romBlock,
-      choiceField('Companion of her choice', optionalChoice(COMPANION_OPTIONS, m.companion, v => { m.companion = v; })),
+      choiceField(t('fm.adm.companion'), optionalChoice(labelled(COMPANION_OPTIONS), m.companion, v => { m.companion = v; })),
     ),
     h('div', { class: 'card' },
-      h('h2', null, '4 · Admission examination'),
+      h('h2', null, '4 · ' + t('fm.adm.exam')),
       h('div', { class: 'grid3' },
-        field('Cervical dilatation (cm) *', input('dilatation', 'number', { min: 0, max: 10 })),
-        field('Descent (fifths palpable)', input('descent', 'number', { min: 0, max: 5 })),
-        field('FHR (bpm) *', input('fhr', 'number', { min: 50, max: 220 })),
-        field('Contractions /10 min', input('contractions', 'number', { min: 0, max: 8 })),
-        field('Pulse (bpm)', input('pulse', 'number', { min: 30, max: 200 })),
-        field('Temp (°C)', input('temp', 'number', { step: '0.1', min: 30, max: 43 })),
-        field('BP systolic', input('sys', 'number', { min: 50, max: 260 })),
-        field('BP diastolic', input('dia', 'number', { min: 30, max: 160 })),
+        field(t('fm.adm.dilatation') + ' *', input('dilatation', 'number', { min: 0, max: 10 })),
+        field(t('fm.adm.descent'), input('descent', 'number', { min: 0, max: 5 })),
+        field(t('fm.adm.fhr') + ' *', input('fhr', 'number', { min: 50, max: 220 })),
+        field(t('fm.adm.contractions'), input('contractions', 'number', { min: 0, max: 8 })),
+        field(t('fm.adm.pulse'), input('pulse', 'number', { min: 30, max: 200 })),
+        field(t('fm.adm.temp'), input('temp', 'number', { step: '0.1', min: 30, max: 43 })),
+        field(t('fm.sys'), input('sys', 'number', { min: 50, max: 260 })),
+        field(t('fm.dia'), input('dia', 'number', { min: 30, max: 160 })),
       ),
-      choiceField('Presentation *', segmented(PRESENTATION_OPTIONS, m.presentation, v => { m.presentation = v; })),
+      choiceField(t('fm.adm.presentation') + ' *', segmented(labelled(PRESENTATION_OPTIONS), m.presentation, v => { m.presentation = v; })),
     ),
     byField(getBy(), v => { by = v; }),
-    h('button', { class: 'btn big', onclick: save }, '✓ Admit & start monitoring'),
-    h('p', { class: 'muted', style: 'text-align:center' },
-      'The monitoring schedule and partograph start automatically from these values.'),
+    h('button', { class: 'btn big', onclick: save }, '✓ ' + t('fm.adm.admit')),
+    h('p', { class: 'muted', style: 'text-align:center' }, t('fm.adm.footnote')),
   );
 
   /** The new case with its admission entries and alerts (nothing saved yet). */
@@ -256,8 +270,7 @@ export function renderAdmission() {
     const alerts = [...applyObservations(p, admTime, baseline, S.settings, { by, source: 'admission' }).added];
 
     // risk factors that should deliver at hospital (CEmONC) level
-    const labelOf = code => (RISK_FACTORS.find(x => x[0] === code) || [code, code])[1];
-    alerts.push(...addAlerts(p, admissionRiskAlerts(p, S.settings, labelOf), 'admission', { time: admTime }));
+    alerts.push(...addAlerts(p, admissionRiskAlerts(p, S.settings, riskLabelEN), 'admission', { time: admTime }));
     return { p, alerts };
   }
 
@@ -274,12 +287,12 @@ export function renderAdmission() {
     } catch (e) {
       saving = false;
       delete page.dataset.saved;
-      toast('Could not admit: ' + ((e && e.message) || e), 'danger');
+      toast(t('fm.adm.saveFailed', { error: (e && e.message) || e }), 'danger');
       return;
     }
     const { p, alerts } = made;
     setBy(by);
-    toast('Admitted — monitoring schedule started ✓');
+    toast(t('fm.adm.saved'));
     location.hash = '#/p/' + p.id;
     if (alerts.length) setTimeout(() => showAlertAckModal(p, alerts), 300);
   }
@@ -293,17 +306,17 @@ export function renderAdmission() {
  * for the tests.
  */
 export function admissionProblem(m, by) {
-  if (!m.name.trim()) return 'Name is required';
-  if (m.gravida == null || m.para == null) return 'Gravida and Para are required';
-  if (!m.onsetMode) return 'Labour onset: choose Spontaneous or Induced';
-  if (!m.membranes) return 'Membranes: choose Intact or Ruptured';
+  if (!m.name.trim()) return t('fm.adm.needName');
+  if (m.gravida == null || m.para == null) return t('fm.adm.needGP');
+  if (!m.onsetMode) return t('fm.adm.needOnset');
+  if (!m.membranes) return t('fm.adm.needMembranes');
   if (m.membranes === 'ruptured' && !m.romUnknown) {
     const rom = localInputToISO(m.romTime);
-    if (!rom) return 'Enter when the membranes ruptured, or tick Time unknown (U)';
-    if (new Date(rom) > new Date()) return 'The rupture time is in the future';
+    if (!rom) return t('fm.adm.needRom');
+    if (new Date(rom) > new Date()) return t('fm.adm.romFuture');
   }
-  if (m.dilatation == null || m.fhr == null) return 'Admission dilatation and FHR are required';
-  if (!m.presentation) return 'Presentation: choose Cephalic, Breech, Transverse or Other';
-  if (!by) return 'Your initials are required';
+  if (m.dilatation == null || m.fhr == null) return t('fm.adm.needExam');
+  if (!m.presentation) return t('fm.adm.needPresentation');
+  if (!by) return t('fm.needInitials');
   return null;
 }

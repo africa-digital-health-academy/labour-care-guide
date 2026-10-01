@@ -1,13 +1,19 @@
 // The wizard's DOM-free contracts: every type the due list can ask for has a
 // step set, the steps offer the WHO codes the engine reads (F1, F7, F9, N3,
 // N4), and only defaults the midwife never touched are reported as defaulted.
+// M5: the text is looked up in the current language when a screen is built,
+// and an alert asked again names its last acknowledgement and starts on its
+// action; each acknowledgement is counted and its note tagged kind 'ack'.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   WIZARD_TYPES, wizardTypeFor, computeDefaulted, wizardSteps, prefillValues, currentCode, timeChoices,
+  ackRepeat, ackPreselect, acknowledgeAlerts,
 } from '../js/wizard.js';
 import { PROTOCOLS, dueList } from '../js/protocol.js';
-import { NOW, iso, mkPatient } from './helpers.mjs';
+import { applyObservations } from '../js/record.js';
+import { t, setLang } from '../js/i18n.js';
+import { NOW, iso, mkPatient, LCG } from './helpers.mjs';
 
 const step = (type, key) => wizardSteps(type).find(s => s.key === key);
 const valuesOf = s => s.options.map(o => o.value);
@@ -157,4 +163,88 @@ test('timeChoices: once a birth is recorded no earlier time is offered; Just now
   assert.deepEqual(offered(minAgo(15)), [0, 5, 10, 15], 'an entry at the birth time itself is allowed');
   assert.deepEqual(offered(minAgo(2)), [0]);
   assert.deepEqual(offered(minAgo(-5)), [0], 'a birth time ahead of the clock still leaves Just now');
+});
+
+// ------------------------------------- M5: language, repeat acknowledgement ----
+
+test('wizard text is looked up in the current language when a screen is built, not when the module loads', () => {
+  try {
+    setLang('am');
+    assert.equal(step('baby', 'fhr').q, t('wz.q_fhr'));
+    assert.notEqual(step('baby', 'fhr').q, 'Fetal heart rate (bpm)?');
+    assert.equal(step('supportive', 'companion').options.find(o => o.value === 'Y').label, t('yes'));
+    assert.equal(step('oxytocin', 'dropsMin').numpad.unit, t('wz.unit_drops'));
+    assert.equal(timeChoices(null, NOW)[1].label, t('wz.time_ago', { n: 5 }));
+  } finally {
+    setLang('en');
+  }
+  assert.equal(step('baby', 'fhr').q, 'Fetal heart rate (bpm)?');
+  assert.equal(step('baby', 'liquor').help,
+    'Skip if membranes intact and nothing draining. M = meconium: + non-significant, ++ medium, +++ thick.');
+  assert.equal(step('exam', 'liquor').options.find(o => o.value === 'M1').label, 'M+', 'codes are shown as they are');
+  assert.equal(step('vitals', 'sys').numpad.unit, 'mmHg', 'units stay in Latin script');
+  assert.deepEqual(timeChoices(null, NOW).map(c => c.label),
+    ['Just now', '5 min ago', '10 min ago', '15 min ago', '30 min ago', '60 min ago']);
+});
+
+// an acknowledged alert as the engine leaves it when it asks again (fields kept from the last acknowledgement)
+const waiting = (extra = {}) => ({
+  id: 'a1', code: 'fhr_abn', severity: 'warn', title: 'Abnormal FHR', time: iso(2), raisedAt: iso(2),
+  ack: false, action: 'senior', actionTime: iso(1.5), ackBy: 'TE', ...extra,
+});
+
+test('ackRepeat: an alert asked again after an acknowledgement gives the repeat number, its time and action', () => {
+  assert.deepEqual(ackRepeat(waiting({ reAlertedAt: iso(1), ackCount: 2 })), { n: 2, at: iso(1.5), action: 'senior' });
+  assert.deepEqual(ackRepeat(waiting({ escalatedAt: iso(1) })), { n: 1, at: iso(1.5), action: 'senior' },
+    'severity raised; saved before M5 without a count: one earlier acknowledgement');
+});
+
+test('ackRepeat: nothing for an alert never acknowledged, or acknowledged since it was asked again', () => {
+  assert.equal(ackRepeat({ id: 'n', severity: 'warn', ack: false, action: null }), null, 'new');
+  assert.equal(ackRepeat({ id: 'e', severity: 'danger', ack: false, action: null, escalatedAt: iso(1) }), null,
+    'raised in severity before any acknowledgement');
+  assert.equal(ackRepeat(waiting({ reAlertedAt: iso(1), ack: true })), null, 'acknowledged again since');
+  assert.equal(ackRepeat(waiting()), null, 'never asked again');
+  assert.equal(ackRepeat(null), null);
+});
+
+test('ackPreselect: the earlier action, the most escalated one when repeats differ, otherwise monitoring', () => {
+  assert.equal(ackPreselect(undefined), 'monitoring');
+  assert.equal(ackPreselect([{ id: 'n', severity: 'warn', ack: false, action: null }]), 'monitoring');
+  assert.equal(ackPreselect([waiting({ reAlertedAt: iso(1), action: 'intervention' })]), 'intervention');
+  assert.equal(ackPreselect([waiting({ reAlertedAt: iso(1), action: 'referral' })]), 'referral');
+  assert.equal(ackPreselect([
+    waiting({ id: 'x', escalatedAt: iso(1), action: 'monitoring' }),
+    waiting({ id: 'y', reAlertedAt: iso(1), action: 'senior' }),
+    { id: 'z', severity: 'warn', ack: false, action: null },
+  ]), 'senior', 'never a step down from what was already done');
+  assert.equal(ackPreselect([waiting({ reAlertedAt: iso(1), action: 'transfer' })]), 'monitoring',
+    'an action no longer offered is not preselected');
+});
+
+test('acknowledgeAlerts counts each acknowledgement and writes a note tagged kind ack; a repeat names the last one', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(2), { baby: { fhr: 165 } }, LCG, { by: 'TE' });
+  const [a] = p.alerts.filter(x => x.code === 'fhr_abn');
+  acknowledgeAlerts(p, [a], 'senior', 'TE', iso(1.9));
+  assert.deepEqual([a.ack, a.action, a.actionTime, a.ackBy, a.ackCount], [true, 'senior', iso(1.9), 'TE', 1]);
+  const note = p.notes.at(-1);
+  assert.deepEqual([note.kind, note.by, note.time, note.plan], ['ack', 'TE', iso(1.9), 'senior']);
+  assert.match(note.text, /^Alerts acknowledged: /, 'record text stays English');
+
+  const r = applyObservations(p, iso(1.5), { baby: { fhr: 166 } }, LCG, { by: 'AB' });
+  assert.deepEqual(r.added, [a], 'asked again by the new abnormal reading');
+  assert.deepEqual(ackRepeat(a), { n: 1, at: iso(1.9), action: 'senior' });
+  assert.equal(ackPreselect(r.added), 'senior');
+  acknowledgeAlerts(p, r.added, 'intervention', 'AB', iso(1.4));
+  assert.deepEqual([a.ackCount, a.action, ackRepeat(a)], [2, 'intervention', null]);
+  applyObservations(p, iso(1), { baby: { fhr: 167 } }, LCG, { by: 'AB' });
+  assert.deepEqual(ackRepeat(a), { n: 2, at: iso(1.4), action: 'intervention' });
+  assert.deepEqual(p.notes.map(n => n.kind), ['ack', 'ack']);
+});
+
+test('acknowledgeAlerts: matched by id after a restore; an earlier action saved before M5 counts as one', () => {
+  const p = mkPatient({ alerts: [waiting({ reAlertedAt: iso(1) })] });
+  acknowledgeAlerts(p, [structuredClone(p.alerts[0])], 'monitoring', 'TE', iso(0.9));
+  assert.deepEqual([p.alerts[0].ack, p.alerts[0].ackCount, p.alerts[0].actionTime], [true, 2, iso(0.9)]);
 });

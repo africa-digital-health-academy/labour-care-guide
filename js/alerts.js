@@ -860,10 +860,17 @@ export function reopenWhere(p, test) {
 // guidelines.
 // ------------------------------------------------------------------------
 
+/**
+ * MgSO4 loading dose (Pritchard regimen, MOH 2021). One source for the
+ * eclampsia card and the pre-referral checklist; a drug dose, so it stays in
+ * English in every language until the clinical panel validates a translation.
+ */
+export const MGSO4_LOADING = '4 g IV (20%) over 5–20 min + 10 g IM (5 g each buttock with 1 ml lidocaine 2%)';
+
 export const EMERGENCIES = [
   {
     code: 'eclampsia', label: 'Convulsion / Eclampsia',
-    advice: ['Protect from injury; left-lateral; airway', 'MgSO₄ loading: 4 g IV (20%) over 5–20 min + 10 g IM (5 g each buttock with 1 ml lidocaine 2%)',
+    advice: ['Protect from injury; left-lateral; airway', 'MgSO₄ loading: ' + MGSO4_LOADING,
       'Control severe BP per protocol', 'Catheterise; monitor', 'REFER URGENTLY with escort'],
   },
   {

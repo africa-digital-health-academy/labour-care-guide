@@ -9,26 +9,38 @@
 //
 // M3: the referral and her departure carry the initials of whoever records
 // them (F3); she stays monitored until the departure is recorded (S8).
+//
+// M5: the form and the buttons go through t() ('fm.' keys in
+// js/i18n/forms.js). Two things stay English whatever the screen language:
+// - the referral record: its reasons and checklist labels are stored in
+//   English (FHIR reasonCode, the CSV export and the case note read them);
+// - the printed / shared referral note: it is a clinical document for the
+//   receiving facility, where records are kept in English (and the hospital
+//   may not read Amharic). It also quotes the alerts, which stay English.
 
 import { h, field, segmented, toast, fmtDT, fmtTime, byField, promptDialog } from '../ui.js';
+import { t, getLang } from '../i18n.js';
+import { en as formsEN } from '../i18n/forms.js';
 import { S, savePatient, getBy, setBy } from '../store.js';
-import { lastObs, exams, stageOf, isLabouring, inPostpartumWatch } from '../protocol.js';
+import { LIMITS, lastObs, exams, stageOf, isLabouring, inPostpartumWatch } from '../protocol.js';
 import { recordEvent, applyReferral } from '../record.js';
+import { MGSO4_LOADING } from '../alerts.js';
 
+// [code, i18n key]; the record stores the English text of the key
 const REASONS = [
-  ['prolonged', 'Prolonged / obstructed labour'],
-  ['distress', 'Fetal distress (FHR abnormality)'],
-  ['malpresentation', 'Malpresentation / malposition'],
-  ['aph', 'Antepartum haemorrhage'],
-  ['preeclampsia', 'Severe pre-eclampsia / eclampsia'],
-  ['prom', 'PROM / prolonged ROM'],
-  ['preterm', 'Preterm labour'],
-  ['prior_cs', 'Previous caesarean section'],
-  ['second_stage', 'Prolonged second stage'],
-  ['pph', 'Postpartum haemorrhage'],
-  ['retained', 'Retained placenta / products'],
-  ['sepsis', 'Fever / suspected sepsis'],
-  ['other', 'Other'],
+  ['prolonged', 'fm.reason.prolonged'],
+  ['distress', 'fm.reason.distress'],
+  ['malpresentation', 'fm.reason.malpresentation'],
+  ['aph', 'fm.reason.aph'],
+  ['preeclampsia', 'fm.reason.preeclampsia'],
+  ['prom', 'fm.reason.prom'],
+  ['preterm', 'fm.reason.preterm'],
+  ['prior_cs', 'fm.reason.prior_cs'],
+  ['second_stage', 'fm.reason.second_stage'],
+  ['pph', 'fm.reason.pph'],
+  ['retained', 'fm.reason.retained'],
+  ['sepsis', 'fm.reason.sepsis'],
+  ['other', 'fm.reason.other'],
 ];
 
 // map alert codes → suggested referral reasons
@@ -43,22 +55,66 @@ const ALERT_TO_REASON = {
   admission_risk: 'prior_cs', emg_cord_prolapse: 'distress', emg_rupture: 'aph',
 };
 
+// Values for the checklist texts' {placeholders}: the MgSO4 dose (English in
+// every language, one source in alerts.js) and the severe-range BP from LIMITS.
+const CHECK_VARS = { dose: MGSO4_LOADING, sys: LIMITS.sys.severe, dia: LIMITS.dia.severe };
+
+// [code, i18n key, applies to the selected reasons]
 const CHECKLIST = [
-  ['iv', 'IV line secured (16–18G)', () => true],
-  ['fluids', 'IV fluids running (NS / Ringer’s)', () => true],
-  ['mgso4', 'MgSO₄ loading dose given — 4 g IV (20%) over 5–20 min + 10 g IM (5 g each buttock + lidocaine)', rs => rs.has('preeclampsia')],
-  ['antihtn', 'Antihypertensive given (if BP ≥ 160/110)', rs => rs.has('preeclampsia')],
-  ['catheter', 'Urinary catheter inserted', rs => rs.has('preeclampsia')],
-  ['abx', 'First-dose antibiotics given', rs => rs.has('sepsis') || rs.has('prom')],
-  ['position', 'Left-lateral position for transport', () => true],
-  ['resuskit', 'Newborn resuscitation kit in the ambulance', rs => rs.has('second_stage') || rs.has('distress')],
-  ['called', 'Receiving hospital called (they expect her)', () => true],
-  ['ambulance', 'Ambulance called / transport arranged', () => true],
-  ['escort', 'Skilled escort accompanies the woman', () => true],
-  ['family', 'Woman & family informed and consented', () => true],
+  ['iv', 'fm.chk.iv', () => true],
+  ['fluids', 'fm.chk.fluids', () => true],
+  ['mgso4', 'fm.chk.mgso4', rs => rs.has('preeclampsia')],
+  ['antihtn', 'fm.chk.antihtn', rs => rs.has('preeclampsia')],
+  ['catheter', 'fm.chk.catheter', rs => rs.has('preeclampsia')],
+  ['abx', 'fm.chk.abx', rs => rs.has('sepsis') || rs.has('prom')],
+  ['position', 'fm.chk.position', () => true],
+  ['resuskit', 'fm.chk.resuskit', rs => rs.has('second_stage') || rs.has('distress')],
+  ['called', 'fm.chk.called', () => true],
+  ['ambulance', 'fm.chk.ambulance', () => true],
+  ['escort', 'fm.chk.escort', () => true],
+  ['family', 'fm.chk.family', () => true],
 ];
 
+/** The English text of an fm. key with its {placeholders} filled: what the record stores. */
+function english(key, vars = {}) {
+  let s = formsEN[key] || key;
+  for (const k of Object.keys(vars)) s = s.replace('{' + k + '}', () => String(vars[k]));
+  return s;
+}
+
 const errText = e => (e && e.message) || String(e);
+
+// The note is read at the receiving hospital: stored codes are written as
+// their English labels, never as "prior_cs" or "private".
+const TRANSPORT_KEY = { ambulance: 'fm.ref.ambulance', private: 'fm.ref.private', other: 'fm.other' };
+export const transportText = code => (TRANSPORT_KEY[code] && formsEN[TRANSPORT_KEY[code]]) || code || '—';
+export const riskText = codes => (codes || []).map(c => formsEN['fm.risk.' + c] || c).join(', ');
+// a medication entry voided as recorded in error was never given
+export const givenMeds = p => (p.meds || []).filter(m => m && !m.voided);
+
+/**
+ * The referral record built from the form. form: { selected (Set of reason
+ * codes), checks ({ code: true }), otherReason, facility, phone, transport }.
+ * Reasons and checklist labels are ENGLISH whatever the screen language: the
+ * FHIR export, the CSV export, the case note and the receiving hospital read
+ * them. No DOM: exported for the tests.
+ */
+export function referralRecord(form, { by, referredBy = '', time = new Date().toISOString() }) {
+  const { selected, checks } = form;
+  return {
+    time,
+    reasons: [...selected].map(code => {
+      const r = REASONS.find(x => x[0] === code);
+      return r ? english(r[1]) : code;
+    }),
+    otherReason: form.otherReason,
+    checklist: CHECKLIST.filter(([, , show]) => show(selected))
+      .map(([code, key]) => ({ code, label: english(key, CHECK_VARS), done: !!checks[code] })),
+    facility: form.facility, phone: form.phone, transport: form.transport,
+    referredBy,
+    by,
+  };
+}
 
 /**
  * Apply a record-layer change to the live case and save it. If either step
@@ -103,64 +159,56 @@ export function renderReferralTab(p) {
   const renderChecklist = () => {
     checklistWrap.replaceChildren(...CHECKLIST
       .filter(([, , show]) => show(selected))
-      .map(([code, label]) => h('label', null,
+      .map(([code, key]) => h('label', null,
         h('input', { type: 'checkbox', checked: !!checks[code], onchange: e => { checks[code] = e.target.checked; } }),
-        label)));
+        t(key, CHECK_VARS))));
   };
   renderChecklist();
 
   const root = h('div', { 'data-form': 'referral' },
     h('div', { class: 'card' },
-      h('h2', null, '🏥 Start referral'),
-      suggested.size ? h('p', { class: 'muted' }, '⚠ Reasons below were pre-selected from active alerts.') : null,
-      h('h3', null, 'Reason(s) for referral'),
-      h('div', { class: 'checklist' }, REASONS.map(([code, label]) => h('label', null,
+      h('h2', null, '🏥 ' + t('fm.ref.start')),
+      suggested.size ? h('p', { class: 'muted' }, '⚠ ' + t('fm.ref.preselected')) : null,
+      h('h3', null, t('fm.ref.reasons')),
+      h('div', { class: 'checklist' }, REASONS.map(([code, key]) => h('label', null,
         h('input', {
           type: 'checkbox', checked: selected.has(code),
           onchange: e => { e.target.checked ? selected.add(code) : selected.delete(code); renderChecklist(); },
         }),
-        label,
+        t(key),
       ))),
-      h('label', { class: 'field', style: 'margin-top:8px' }, h('span', null, 'Other / details'),
+      h('label', { class: 'field', style: 'margin-top:8px' }, h('span', null, t('fm.ref.otherDetails')),
         h('input', { type: 'text', oninput: e => { m.otherReason = e.target.value; } })),
     ),
     h('div', { class: 'card' },
-      h('h2', null, 'Pre-referral bundle — complete before she leaves'),
+      h('h2', null, t('fm.ref.bundle')),
       checklistWrap,
     ),
     h('div', { class: 'card' },
-      h('h2', null, 'Destination'),
+      h('h2', null, t('fm.ref.destination')),
       h('div', { class: 'grid2' },
-        field('Receiving facility', h('input', { type: 'text', placeholder: 'e.g. Primary Hospital', oninput: e => { m.facility = e.target.value; } })),
-        field('Facility phone', h('input', { type: 'tel', oninput: e => { m.phone = e.target.value; } })),
+        field(t('fm.ref.facility'), h('input', { type: 'text', placeholder: t('fm.ref.facilityPlaceholder'), oninput: e => { m.facility = e.target.value; } })),
+        field(t('fm.ref.facilityPhone'), h('input', { type: 'tel', oninput: e => { m.phone = e.target.value; } })),
       ),
-      field('Transport', segmented([
-        { value: 'ambulance', label: 'Ambulance' }, { value: 'private', label: 'Private vehicle' }, { value: 'other', label: 'Other' },
+      field(t('fm.ref.transport'), segmented([
+        { value: 'ambulance', label: t('fm.ref.ambulance') }, { value: 'private', label: t('fm.ref.private') }, { value: 'other', label: t('fm.other') },
       ], m.transport, v => { m.transport = v; })),
     ),
     byField(getBy(), v => { by = v; }),
-    h('button', { class: 'btn big danger', onclick: save }, '🚑 Confirm referral & generate note'),
+    h('button', { class: 'btn big danger', onclick: save }, '🚑 ' + t('fm.ref.confirm')),
   );
 
   async function save() {
     if (saving) return;
-    if (!selected.size && !m.otherReason.trim()) { toast('Select at least one reason', 'danger'); return; }
-    if (!by) { toast('Your initials are required', 'danger'); return; }
+    if (!selected.size && !m.otherReason.trim()) { toast(t('fm.ref.needReason'), 'danger'); return; }
+    if (!by) { toast(t('fm.needInitials'), 'danger'); return; }
     const missing = CHECKLIST.filter(([code, , show]) => show(selected) && !checks[code]);
     if (missing.length) {
       // warn but never block — transport must not wait for paperwork
-      toast(`Note: ${missing.length} pre-referral item(s) not ticked`, 'danger');
+      toast(t('fm.ref.missing', { n: missing.length }), 'danger');
     }
     saving = true; // stays set once saved: the tab is redrawn as the referral note
-    const referral = {
-      time: new Date().toISOString(),
-      reasons: [...selected].map(code => (REASONS.find(r => r[0] === code) || [code, code])[1]),
-      otherReason: m.otherReason,
-      checklist: CHECKLIST.filter(([, , show]) => show(selected)).map(([code, label]) => ({ code, label, done: !!checks[code] })),
-      facility: m.facility, phone: m.phone, transport: m.transport,
-      referredBy: S.settings.midwifeName || '',
-      by,
-    };
+    const referral = referralRecord({ ...m, selected, checks }, { by, referredBy: S.settings.midwifeName || '' });
     try {
       root.dataset.saved = '1';
       // the record layer marks her "not yet left", so monitoring continues (S8)
@@ -172,7 +220,7 @@ export function renderReferralTab(p) {
       return;
     }
     setBy(by);
-    toast('Referral recorded — note ready ✓');
+    toast(t('fm.ref.saved'));
     redraw(root, p);
   }
 
@@ -192,9 +240,9 @@ function referrer(r) {
  */
 async function recordDeparture(p, root) {
   const res = await promptDialog({
-    title: 'She has left the facility',
-    message: 'Record that she has left with her escort? Monitoring on this device stops.',
-    by: getBy(), okLabel: 'Record departure',
+    title: t('fm.ref.left'),
+    message: t('fm.ref.leftMsg'),
+    by: getBy(), okLabel: t('fm.ref.recordDeparture'),
   });
   if (!res) return;
   try {
@@ -204,10 +252,12 @@ async function recordDeparture(p, root) {
     return;
   }
   setBy(res.by);
-  toast('Departure recorded');
+  toast(t('fm.ref.departed'));
   redraw(root, p);
 }
 
+// The note card and the shared text are English on purpose (see the top of
+// this file); only the controls around them follow the screen language.
 function referralNote(p) {
   const r = p.referral;
   const lastExam = exams(p).slice(-1)[0];
@@ -220,17 +270,18 @@ function referralNote(p) {
   const noteText = buildShareText(p);
 
   const root = h('div', null,
+    getLang() !== 'en' ? h('p', { class: 'muted no-print' }, t('fm.ref.noteInEnglish')) : null,
     h('div', { class: 'card', id: 'referral-note' },
       h('h2', null, '🚑 Referral note'),
       kv('From', S.settings.facilityName || 'Health centre'),
       kv('To', `${r.facility || '—'}${r.phone ? ' · ' + r.phone : ''}`),
       kv('Time of referral', fmtDT(r.time)),
-      kv('Transport', r.transport),
+      kv('Transport', transportText(r.transport)),
       r.handoverAt ? kv('Left the facility', fmtDT(r.handoverAt) + (r.handoverBy ? ' - ' + r.handoverBy : '')) : null,
       h('hr'),
       kv('Patient', `${p.name} · ${p.age || '?'} y · MRN ${p.mrn || '—'}`),
       kv('Obstetric', `G${p.gravida}P${p.para} · GA ${p.gaWeeks || '?'} wk`),
-      kv('Risk factors', (p.riskFactors || []).join(', ') || 'None recorded'),
+      kv('Risk factors', riskText(p.riskFactors) || 'None recorded'),
       h('hr'),
       h('h3', null, 'Reason(s) for referral'),
       h('ul', null, r.reasons.map(x => h('li', null, x)), r.otherReason ? h('li', null, r.otherReason) : null),
@@ -247,25 +298,24 @@ function referralNote(p) {
       h('h3', null, 'Pre-referral treatment given'),
       h('ul', null, r.checklist.map(c => h('li', null, (c.done ? '☑ ' : '☐ NOT DONE — ') + c.label))),
       h('h3', null, 'Medication in labour'),
-      h('ul', null, (p.meds || []).map(mm => h('li', null, `${fmtTime(mm.time)} — ${mm.kind}: ${mm.detail || ''}`)),
-        (p.meds || []).length ? null : h('li', null, 'None recorded')),
+      h('ul', null, givenMeds(p).map(mm => h('li', null, `${fmtTime(mm.time)} — ${mm.kind}: ${mm.detail || ''}`)),
+        givenMeds(p).length ? null : h('li', null, 'None recorded')),
       h('hr'),
       kv('Referred by', referrer(r) || '________________'),
       kv('Receiving feedback', '________________ (please return outcome to the health centre)'),
     ),
-    waiting && (isLabouring(p) || inPostpartumWatch(p)) ? h('p', { class: 'muted no-print' },
-      'Monitoring continues on the ward board until her departure is recorded.') : null,
+    waiting && (isLabouring(p) || inPostpartumWatch(p)) ? h('p', { class: 'muted no-print' }, t('fm.ref.monitoring')) : null,
     h('div', { class: 'no-print', style: 'display:flex;gap:8px;flex-wrap:wrap' },
-      waiting ? h('button', { class: 'btn warn', onclick: () => recordDeparture(p, root) }, '🚑 She has left the facility') : null,
-      h('button', { class: 'btn', onclick: () => window.print() }, '🖨 Print note'),
+      waiting ? h('button', { class: 'btn warn', onclick: () => recordDeparture(p, root) }, '🚑 ' + t('fm.ref.left')) : null,
+      h('button', { class: 'btn', onclick: () => window.print() }, '🖨 ' + t('fm.ref.print')),
       h('button', {
         class: 'btn secondary', onclick: async () => {
           try {
             if (navigator.share) await navigator.share({ title: 'Referral note', text: noteText });
-            else { await navigator.clipboard.writeText(noteText); toast('Note copied — paste into SMS/Telegram'); }
+            else { await navigator.clipboard.writeText(noteText); toast(t('fm.ref.copied')); }
           } catch { /* user cancelled */ }
         },
-      }, '📤 Share as text'),
+      }, '📤 ' + t('fm.ref.share')),
     ),
   );
   return root;
@@ -282,7 +332,7 @@ function buildShareText(p) {
     lastExam ? `Exam ${fmtTime(lastExam.time)}: ${lastExam.v.dilatation}cm, descent ${lastExam.v.descent ?? '—'}/5` : '',
     lastBaby ? `FHR ${lastBaby.v.fhr}bpm` : '',
     `Given: ${r.checklist.filter(c => c.done).map(c => c.code).join(', ') || 'see note'}`,
-    `By: ${referrer(r) || '-'}, transport: ${r.transport}`,
+    `By: ${referrer(r) || '-'}, transport: ${transportText(r.transport)}`,
   ].filter(Boolean).join('\n');
 }
 
