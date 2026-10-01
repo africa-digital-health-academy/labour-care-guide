@@ -6,6 +6,7 @@ import { S, savePatient, uid } from './store.js';
 import { getProtocol } from './protocol.js';
 import { applyObservations, createCase } from './record.js';
 import { toast } from './ui.js';
+import { t } from './i18n.js';
 
 export async function seedDemoPatient() {
   const proto = getProtocol(S.settings, null);
@@ -56,9 +57,9 @@ export async function seedDemoPatient() {
   add(1, 'contractions', { count: 4, durBand: 'b40_60', duration: 50 });
   add(1, 'supportive', { companion: 'Y', painRelief: 'Y', oralFluid: 'Y', posture: 'upright' });
 
-  p.notes.push({ time: hrs(1), by: 'DEMO', text: 'DEMO case for training — progressing well, FHR briefly 162 at 2.5 h (settled).', plan: 'continue routine monitoring' });
+  p.notes.push({ id: uid(), time: hrs(1), by: 'DEMO', text: 'DEMO case for training — progressing well, FHR briefly 162 at 2.5 h (settled).', plan: 'continue routine monitoring' });
 
   await savePatient(p);
-  toast('Demo case loaded — open it from the ward board');
+  toast(t('demo_loaded'));
   location.hash = '#/';
 }

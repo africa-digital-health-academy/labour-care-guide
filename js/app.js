@@ -131,6 +131,9 @@ function render(reason = 'navigate') {
     return;
   }
   const r = route();
+  // a new screen (another view or another woman) opens at its top; a tab of
+  // the same case or a data refresh keeps the midwife's place
+  const newScreen = reason === 'navigate' && (!shown || shown.view !== r.view || shown.id !== r.id);
   shown = r;
   // screen readers and the browser's own spelling and font choices follow the screen language
   document.documentElement.lang = getLang() === 'am' ? 'am' : 'en';
@@ -160,6 +163,7 @@ function render(reason = 'navigate') {
   else if (r.view === 'settings') page = renderSettings();
   else page = renderDashboard();
   app.append(page);
+  if (newScreen) window.scrollTo(0, 0);
 
   const navBtn = (ico, label, target, active) => h('button', {
     class: active ? 'active' : '', onclick: () => { location.hash = target; },
@@ -370,7 +374,11 @@ async function boot() {
 
   // offline support + update chip
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').then(setupUpdates).catch(() => { /* file:// or unsupported: app still works online */ });
+    // updateViaCache 'none': an update check fetches sw.js AND js/version.js
+    // (imported by the worker) past the HTTP cache, so a release (one edit in
+    // version.js) is seen at the next check, not when the cache expires
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(setupUpdates).catch(() => { /* file:// or unsupported: app still works online */ });
   }
 }
 

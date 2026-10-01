@@ -327,11 +327,16 @@ export function stepper(initial, onChange, { min = 0, max = 10, unit = '', hint 
 /**
  * A labelled control. Only a single form control is wrapped in <label>: a
  * label around a group of buttons makes a tap on the question text "click"
- * the first answer, silently recording a value nobody chose.
+ * the first answer, silently recording a value nobody chose, and names only
+ * that first button for a screen reader. A group of buttons becomes a named
+ * group instead (role group, labelled by the question text).
  */
+let fieldSeq = 0;
 export function field(labelText, inputEl) {
   const single = inputEl && /^(INPUT|SELECT|TEXTAREA)$/.test(inputEl.tagName || '');
-  return h(single ? 'label' : 'div', { class: 'field' }, h('span', null, labelText), inputEl);
+  if (single) return h('label', { class: 'field' }, h('span', null, labelText), inputEl);
+  const id = 'fld-' + (++fieldSeq);
+  return h('div', { class: 'field', role: 'group', 'aria-labelledby': id }, h('span', { id }, labelText), inputEl);
 }
 
 export function alertBanner(alert, actions) {
