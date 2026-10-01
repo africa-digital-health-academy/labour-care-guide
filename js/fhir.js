@@ -14,8 +14,8 @@
 // receiver recognise the same record in a later export. Nothing is dropped
 // for having been corrected: a voided entry goes out as entered-in-error with
 // its reason. A finding about the baby after the birth always has the newborn
-// Patient as subject, never the mother. Pure, except downloadFHIR(), which
-// needs the DOM, and the default export time (opts.now).
+// Patient as subject, never the mother, and no Encounter (the labour stay is
+// hers). Pure, except downloadFHIR() (DOM) and the default export time.
 
 import { isLabouring, inPostpartumWatch, stageOf, birthTime, activeObs, toMs, POSTPARTUM } from './protocol.js';
 import { robsonGroup } from './indicators.js';
@@ -286,11 +286,13 @@ function createContext(p, settings, now) {
   };
   const caseId = String(p.id || 'case');
   const entries = [];
+  const ref = key => ({ reference: 'urn:uuid:' + idOf(key) });
   return {
-    p, settings, now, entries, caseId,
+    p, settings, now, entries, caseId, ref,
     hasBirth: !!p.delivery,
     hasNewborn: needsNewborn(p),
-    ref: key => ({ reference: 'urn:uuid:' + idOf(key) }),
+    /** subject, and the labour Encounter only on her own resources: it is her stay, and no newborn Encounter is invented */
+    subjectRefs: key => ({ subject: ref(key), encounter: key === 'mother' ? ref('encounter') : undefined }),
     /** Business identifier: the same record carries the same value in every export. */
     recordId: key => [{ system: LCG + ':record', value: `${caseId}/${key}` }],
     add(key, resourceType, body) {
@@ -316,8 +318,7 @@ function addObservation(ctx, key, src, f) {
     status: src.voided ? 'entered-in-error' : f.status || 'final',
     category: category(f.cat),
     code: cc(f.code),
-    subject: ctx.ref(f.subject || 'mother'),
-    encounter: ctx.ref('encounter'),
+    ...ctx.subjectRefs(f.subject || 'mother'),
     effectiveDateTime: when(src.time),
     performer: byRef(src.by) ? [byRef(src.by)] : undefined,
     ...(f.value || {}),
@@ -659,8 +660,7 @@ function exportBirth(ctx) {
     identifier: ctx.recordId('birth'),
     status: 'completed',
     code: cc(blank(d.mode) ? MODE.none : MODE[d.mode] || MODE.other),
-    subject: ctx.ref('mother'),
-    encounter: ctx.ref('encounter'),
+    ...ctx.subjectRefs('mother'),
     performedDateTime: when(d.time),
     performer: byRef(d.by) ? [{ actor: byRef(d.by) }] : undefined,
   });
@@ -715,9 +715,8 @@ function exportAlert(ctx, a, i) {
     status: a.resolved ? 'inactive' : 'active',
     category: [cc([FLAG_CATEGORY, 'clinical', 'Clinical'])],
     code: compact({ coding: blank(a.code) ? undefined : [coding(LCG + ':alert', String(a.code))], text: a.title || a.code || 'Alert' }),
-    subject: ctx.ref(isNewbornAlert(a.code) ? 'newborn' : 'mother'),
+    ...ctx.subjectRefs(isNewbornAlert(a.code) ? 'newborn' : 'mother'),
     period: compact({ start: when(a.time), end: a.resolved ? when(a.resolvedAt) : undefined }),
-    encounter: ctx.ref('encounter'),
   });
 }
 
@@ -734,8 +733,7 @@ function exportReferral(ctx) {
     intent: 'order',
     priority: 'urgent',
     code: cc(C.referral),
-    subject: ctx.ref('mother'),
-    encounter: ctx.ref('encounter'),
+    ...ctx.subjectRefs('mother'),
     authoredOn: when(r.time),
     requester: requester ? { type: 'Practitioner', display: requester } : undefined,
     performer: [{ display: blank(r.facility) ? 'Receiving hospital' : String(r.facility) }],

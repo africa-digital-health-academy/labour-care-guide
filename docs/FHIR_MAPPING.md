@@ -19,7 +19,7 @@ There is no published WHO SMART Guidelines DAK or HL7 implementation guide for i
 | App data | FHIR resource |
 |---|---|
 | Mother | `Patient` (gender female, MRN identifier `urn:ethiopia:mrn`, name, phone, kebele). Whenever the newborn is exported, `Patient.link` (type `seealso`) points to the RelatedPerson below - the same woman in her role as mother. |
-| Labour admission | `Encounter`: class IMP, type SCT 236973005 *Delivery procedure*, admitting midwife as participant (v3 ParticipationType ADM). Status and end: see *Encounter status*. |
+| Labour admission | `Encounter`: class IMP, type SCT 236973005 *Delivery procedure*, subject = the mother, admitting midwife as participant (v3 ParticipationType ADM). Status and end: see *Encounter status*. Only the mother's own resources reference it (`encounter`, or `context` on MedicationAdministration). |
 | Each recorded value | `Observation` (one per value; see the code tables). `effectiveDateTime` = the entry time, `performer` = the initials, `category` always present. |
 | Birth | `Procedure` coded by the mode of birth, performer = initials on the birth record; the birth outcome (subject: the newborn) and the blood loss at birth (subject: the mother) are Observations `partOf` it. |
 | Newborn | `Patient` (identifier `<case id>/newborn`, gender, `birthDate` = East Africa Time date of birth, `_birthDate` extension `patient-birthTime` with the +03:00 time, `deceasedBoolean` true for a stillbirth). Exported with the birth record and whenever any newborn finding exists, also when the birth record is not on file (then no `birthDate`, gender `unknown`). Subject of every newborn finding: see *Mother or newborn*. |
@@ -50,7 +50,8 @@ She is an inpatient under care until she leaves or the case ends, so the stay is
 - **Birth record not on file** (voided into `deliveryHistory`, not yet recorded again): the baby checks and newborn alerts recorded before the correction still go to the newborn. The newborn `Patient` goes out with the same identifier `<case id>/newborn`, no `birthDate` and gender `unknown`, and each baby-check Observation carries the note "no birth record on file". The next export with the new birth record completes the same Patient.
 - **Fetal findings in labour stay on the mother**: FHR, decelerations and amniotic fluid. Their codes name the fetus, and the fetus is not a Patient.
 - **The stillbirth alert stays on the mother**: it asks for respectful supportive care of her and her family.
-- Newborn findings keep the labour Encounter as their context; no separate newborn Encounter is made. Essential newborn care and resuscitation are not exported yet; when they are, the same rule applies.
+- **Newborn findings carry no `encounter`**: the only Encounter is the mother's labour stay, and a receiver that checks that a resource's subject matches its Encounter's subject would reject or mis-file them. No newborn Encounter is invented (an integration choice to review, below). The mother's own resources keep the Encounter.
+- Essential newborn care and resuscitation are not exported yet; when they are, the same rules apply.
 
 ### Mother and newborn: why not Patient.link
 
@@ -135,7 +136,7 @@ Local code systems: `urn:labour-care-guide:observation` (companion, pain-relief,
 | cs | 11466000 Cesarean section |
 | other | 236973005 Delivery procedure |
 
-## Needs terminology review
+## Needs terminology or integration review
 
 1. **Local codes** with no standard code found: companion of choice, pain relief received, oral fluid taken, urine passed since birth, timing of fetal death, blood-loss method, Robson groups (SNOMED has the observable 1303698009 but no group values), alert codes.
 2. **1399254006** *Fetal heart rate deceleration absent*: a SNOMED International concept from July 2026; terminology servers on older editions report it unknown (the text "None" travels with it).
@@ -144,6 +145,7 @@ Local code systems: `urn:labour-care-guide:observation` (companion, pain-relief,
 5. **Vaginal breech birth**: no active SNOMED procedure for breech delivery without saying spontaneous (177157003) or assisted (177158008); the app does not record which.
 6. **Upright / mobile posture** and **feeding well** go as text only (inactive or no matching SNOMED concept).
 7. The MRN identifier system `urn:ethiopia:mrn` is a placeholder until the facility or national MRN system URI is agreed.
+8. **Newborn Encounter** (integration): newborn findings go out with no `encounter`, because the labour Encounter's subject is the mother. The alternative is a newborn Encounter (subject = the newborn, `partOf` the mother's labour Encounter) that the newborn findings reference; agree which one the receiving EMR expects.
 
 ## Corrected from v1
 

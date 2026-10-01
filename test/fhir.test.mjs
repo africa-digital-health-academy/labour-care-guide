@@ -383,6 +383,31 @@ test('birth record voided, not yet recorded again: the baby check still goes to 
   for (const r of allRefs(b)) assert.ok(urls.has(r), `reference ${r} resolves inside the bundle`);
 });
 
+test('the labour Encounter is hers: no newborn resource references it, her own resources keep it', () => {
+  const born = bornCase();
+  born.alerts.push(alert('a1', 'nb_breathing', 'danger', 'pb'), alert('a2', 'pp_atony', 'danger', 'pm'));
+  born.meds.push({ id: 'm1', time: iso(0.9), kind: 'medicine', detail: 'Oxytocin 10 IU IM', action: 'given', by: 'CD' });
+  born.referral = { ...REFERRAL, time: iso(0.6) };
+  const voided = bornCase();
+  voided.alerts.push(alert('a1', 'nb_cold', 'warn', 'pb'));
+  voidDelivery(voided, LCG, { by: 'CD', reason: 'recorded on the wrong woman', at: iso(0.25) });
+  for (const [name, p, newbornCount] of [['birth on record', born, 8], ['birth record voided', voided, 4]]) {
+    const b = buildFHIRBundle(p, SETTINGS, { now: NOW });
+    const byUrl = new Map(b.entry.map(e => [e.fullUrl, e.resource]));
+    const [mother, baby] = resources(b, 'Patient');
+    const about = who => resources(b).filter(r => r.resourceType !== 'Encounter' && r.subject && r.subject.reference === urlOf(b, who));
+    // a receiver may check that a resource's subject is its Encounter's subject
+    for (const r of resources(b)) {
+      const enc = r.encounter || r.context;
+      if (enc) assert.equal(byUrl.get(enc.reference).subject.reference, r.subject.reference, `${name}: ${r.resourceType}`);
+    }
+    assert.equal(about(baby).length, newbornCount, `${name}: newborn findings`);
+    for (const r of about(baby)) assert.equal(r.encounter, undefined, `${name}: ${r.identifier[0].value} has no Encounter`);
+    assert.equal(resources(b, 'Encounter').length, 1, `${name}: no newborn Encounter is invented`);
+    for (const r of about(mother)) assert.ok(r.encounter || r.context, `${name}: ${r.resourceType} keeps her Encounter`);
+  }
+});
+
 test('no newborn Patient before the birth when nothing is about the baby', () => {
   const b = buildFHIRBundle(fullCase({ status: 'active' }), SETTINGS, { now: NOW });
   assert.equal(resources(b, 'Patient').length, 1);
