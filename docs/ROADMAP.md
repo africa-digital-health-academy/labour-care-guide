@@ -4,7 +4,7 @@
 
 Published as [DrTemesgen/parthograph](https://github.com/DrTemesgen/parthograph), last release v1.3.0 (12 June 2026), live at https://drtemesgen.github.io/parthograph/: dual-protocol engine (WHO LCG 2020 and the Ethiopian modified partograph, MOH 2021), guided wizard, auto-drawn SVG chart, due timers and ward board, tiered alerts with acknowledgement, referral support with a pre-referral bundle and a printable note, emergency cards, birth record with APGAR, reports, CSV and JSON backup, FHIR R4 export, Ethiopian calendar, draft Amharic, offline PWA. The audit of v1 against the current WHO documents is [WHO_ALIGNMENT_2026.md](WHO_ALIGNMENT_2026.md).
 
-## v2.0 (this repository) - in progress
+## v2.0 (this repository) - released as a public preview, 1 October 2026
 
 Started on 28 September 2026 from the v1.3.0 tree. One branch and one pull request per milestone; details per milestone in [CHANGELOG.md](../CHANGELOG.md).
 
@@ -16,7 +16,7 @@ Started on 28 September 2026 from the v1.3.0 tree. One branch and one pull reque
 | M3 | Safe rendering, admission that records only what was entered, initials on every entry, void, correct and resolve flows, PPH card, postpartum watch screens | done, 30 Sep 2026 |
 | M4 | Chart and print laid out as the WHO sheet, continuation sheets, reports with the six WHO indicators and CSV exports | done, 1 Oct 2026 |
 | M5 | FHIR export fixes, Amharic draft coverage of the screens, the Ethiopian partograph split out of the chart module, documentation | done, 1 Oct 2026 |
-| M6 | Verification and review: `npm test`, browser walk of the demo case (phone width, offline reload, update chip after a version bump), hardening of the M5 follow-ups, an independent review of the engine against the WHO texts, and the clinical tick list [GAP_REGISTER.md](GAP_REGISTER.md). Then, only on the owner's go: repository made public, GitHub Pages enabled, tag v2.0.0, a "superseded by v2" line on the Parthograph README | in progress (verification and review); release v2.0.0 waits for the owner's go |
+| M6 | Verification and review: `npm test`, browser walk of the demo case (phone width, offline reload, update chip after a version bump), hardening of the M5 follow-ups, an independent review of the engine against the WHO texts, and the clinical tick list [GAP_REGISTER.md](GAP_REGISTER.md). Then, only on the owner's go: repository made public, GitHub Pages enabled, tag v2.0.0, a "superseded by v2" line on the Parthograph README | done; v2.0.0 public preview published 1 Oct 2026 on the owner's go; the "superseded" line on the Parthograph README waits for the clinical panel |
 
 ## v2.1 - next
 
