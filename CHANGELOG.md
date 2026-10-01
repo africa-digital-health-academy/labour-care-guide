@@ -11,9 +11,11 @@ follow-ups, and the documentation for v2.
   reason; every Observation has a category. Now exported as well: amniotic
   fluid, decelerations, supportive care and posture, the pushing mark, blood
   loss, the postpartum checks, the birth (mode, outcome, stillbirth timing)
-  and the Robson group. The encounter is in progress during labour and
-  finished after the birth, the closure or her departure; the newborn's birth
-  date is the East Africa Time date. The baby is no longer linked to the
+  and the Robson group. The encounter stays in progress through labour, the
+  24-hour postpartum watch and a referral not yet departed, and is finished
+  after the closure, her departure or the end of the watch; the newborn's
+  birth date is the East Africa Time date, and every newborn finding is
+  exported on the newborn, also when the birth record was voided. The baby is no longer linked to the
   mother as the same person, which invited a record merge; the mother is
   recorded as the baby's related person. Contraction duration carried the
   code for intensity; corrected. Codes were checked on public terminology
@@ -36,10 +38,14 @@ follow-ups, and the documentation for v2.
   action; otherwise the midwife must tap one. Later episodes and closed
   alerts are labelled, and a void that opens alerts opens the dialog.
   Acknowledgement notes no longer count as shared decisions in the audit.
-- Entries are judged again when a back-timed exam, a void or a correction
-  moves a stage start: a contraction finding that now falls in the latent
-  phase closes its alert ("restaged"), and one that now falls in active labour
-  raises its alert. The void dialog says when an alert will open.
+- Every entry is judged as the case stood at its own time, when it is
+  recorded and again whenever a back-timed exam, a void or a correction moves
+  a stage start: a contraction finding that now falls in the latent phase
+  closes its alert ("restaged"), and one that now falls in active labour
+  raises its alert. An exam added, voided or corrected re-judges the exams
+  after it, so a forgotten earlier exam raises the progress alert it implies.
+  A void or a correction runs the time rules in the same save, and its
+  confirmation lists every alert that will open or close.
 - The second-stage companion indicator counts only women who reached the
   second stage.
 - The referral note writes risk factors and transport in words, not codes,

@@ -6,7 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chartSVG, printSheetsHTML } from '../js/chart.js';
 import { planText } from '../js/partograph.js';
-import { NOW, iso, mkPatient, LCG } from './helpers.mjs';
+import { NOW, iso, mkPatient, LCG, ETH } from './helpers.mjs';
+import { applyObservations } from '../js/record.js';
 
 test('planText: an acknowledgement action code is written in words', () => {
   assert.equal(planText({ kind: 'ack', text: 'Alerts acknowledged: FHR 170', plan: 'senior' }), 'Senior/colleague called');
@@ -42,4 +43,23 @@ test('the chart header writes risk factors in words', () => {
   const all = ['prior_cs', 'grand_multi', 'multiple', 'malpresentation', 'aph', 'preeclampsia', 'anaemia', 'diabetes', 'hiv', 'young', 'short', 'preterm'];
   const full = chartSVG(mkPatient({ riskFactors: all.slice(0, 3) }), LCG, NOW).svg;
   assert.ok(full.includes('Previous CS, Grand multipara, Multiple pregnancy'));
+});
+
+const RED_BAR = /width="12" height="[^"]*" fill="[^"]*" stroke="#c62828"/;
+const ANY_BAR = /width="12" height="[^"]*" fill="[^"]*" stroke="/;
+
+test('Ethiopian partograph: a contraction bar is red only where the engine raised a contraction alert', () => {
+  const latent = mkPatient({ activeStartTime: null });
+  applyObservations(latent, iso(1), { contractions: { count: 1, durBand: 'lt20' } }, ETH);
+  assert.deepEqual(latent.obs[0].flags || [], [], 'no contraction alert in the latent phase');
+  const s1 = chartSVG(latent, ETH, NOW).svg;
+  assert.ok(ANY_BAR.test(s1), 'the bar is drawn');
+  assert.ok(!RED_BAR.test(s1), 'latent: not red');
+  const active = mkPatient();
+  applyObservations(active, iso(1), { contractions: { count: 1, durBand: 'lt20' } }, ETH);
+  assert.ok((active.obs[0].flags || []).length > 0, 'active labour: flagged');
+  assert.ok(RED_BAR.test(chartSVG(active, ETH, NOW).svg), 'active: red');
+  // a v1 entry without stored flags keeps the value test
+  delete active.obs[0].flags;
+  assert.ok(RED_BAR.test(chartSVG(active, ETH, NOW).svg));
 });

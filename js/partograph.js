@@ -93,6 +93,7 @@ export const ALERT_CODES = {
   companion: ['no_companion'], painRelief: ['no_pain_relief'], oralFluid: ['no_fluids'], posture: ['supine'],
   dilatation: ['lcg_progress', 'alert_line', 'action_line'],
 };
+const CONTRACTION_CODES = [...ALERT_CODES.count, ...ALERT_CODES.duration];
 
 /** Alerts by the id of each entry that raised them. */
 export function ackIndex(p) {
@@ -405,7 +406,11 @@ function partoMother(c) {
   for (const o of by('contractions')) {
     if (o.v.count == null) continue;
     const hgt = Math.min(8, o.v.count) * (SEC.contr.h - 8) / 8;
-    const bad = FLAG.contractionCount(o.v.count) || FLAG.contractionDuration(o.v.duration);
+    // red only where the engine raised a contraction alert (none in the latent
+    // phase); a v1 entry without stored flags falls back to the value tests
+    const bad = Array.isArray(o.flags)
+      ? o.flags.some(code => CONTRACTION_CODES.includes(code))
+      : FLAG.contractionCount(o.v.count) || FLAG.contractionDuration(o.v.duration);
     s += `<rect x="${c.x(o.time) - 6}" y="${SEC.contr.y + SEC.contr.h - hgt}" width="12" height="${hgt}" fill="${SHADE[o.v.durBand] || '#9cc8bd'}" stroke="${bad ? '#c62828' : '#33514a'}" stroke-width="${bad ? 2 : 0.8}"/>`;
   }
   for (const o of by('oxytocin')) s += note('oxy', o.time, `${o.v.uL != null ? o.v.uL + 'U' : ''}${o.v.dropsMin != null ? '@' + o.v.dropsMin : ''}`);
