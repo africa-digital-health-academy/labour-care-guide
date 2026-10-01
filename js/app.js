@@ -178,7 +178,7 @@ function updateClock(el) {
   el.innerHTML = '';
   el.append(
     now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: APP_TZ }),
-    draftChip(),
+    draftChip() || '', // null in English: append() would print "null"
     S.settings.ethiopianDates ? h('span', { class: 'ec' }, formatEthiopic(eatDate(now), S.settings.lang)) : '',
   );
 }

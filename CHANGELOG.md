@@ -29,8 +29,12 @@ follow-ups, and the documentation for v2.
   on an Amharic draft whose placeholders differ from the English.
 - Placeholders are filled in one pass: a "$&" typed in a reason or a name is
   no longer rewritten.
-- An alert asked again after an acknowledgement shows its repeat number and
-  the last acknowledgement, and the dialog starts on the action taken then.
+- An alert asked again after an acknowledgement, or a new episode of an alert
+  acknowledged before, shows its repeat or episode number and the last
+  acknowledgement. The dialog has no default action any more: it starts on
+  the earlier action only when every alert in it is a repeat that shared that
+  action; otherwise the midwife must tap one. Later episodes and closed
+  alerts are labelled, and a void that opens alerts opens the dialog.
   Acknowledgement notes no longer count as shared decisions in the audit.
 - Entries are judged again when a back-timed exam, a void or a correction
   moves a stage start: a contraction finding that now falls in the latent
