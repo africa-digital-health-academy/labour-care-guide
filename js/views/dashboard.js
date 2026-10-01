@@ -3,11 +3,14 @@
 // this board answers "who needs me right now?" at a glance. Women in the
 // postpartum watch after birth (N4) have their own section with the same due
 // chips. Alert badges count only alerts that are open AND unacknowledged.
-// Every string shown goes through t() ('pt.' keys, js/i18n/patient.js).
+// Every string shown goes through t() ('pt.' keys, js/i18n/patient.js). The
+// public-preview notice (2.0.2, js/preview.js) opens the board: a card on
+// first run, when the device holds no case; otherwise one dismissible line.
 
 import { h } from '../ui.js';
 import { t } from '../i18n.js';
 import { S } from '../store.js';
+import { previewNotice, previewNoticeMode, previewDismissed } from '../preview.js';
 import {
   getProtocol, dueList, stageOf, isLabouring, awaitingHandover, monitoringStage, inPostpartumWatch, birthTime,
 } from '../protocol.js';
@@ -23,7 +26,8 @@ export function renderDashboard() {
   const recent = S.patients.filter(p => !isLabouring(p) && !inPostpartumWatch(p, now)
     && (now - new Date(p.updatedAt || p.createdAt)) < RECENT_MS);
 
-  const page = h('div', { class: 'page' });
+  const page = h('div', { class: 'page' },
+    previewNotice(previewNoticeMode({ cases: S.patients.length, dismissed: previewDismissed() })));
 
   if (!labouring.length && !watch.length && !recent.length) {
     page.append(h('div', { class: 'empty-state' },
