@@ -13,6 +13,12 @@
 // postpartum check still in the entries - the engine counts those checks only
 // from the birth time on, so they would be lost and re-fire as overdue.
 //
+// M6: nor may a birth, first recorded or corrected, fall in a minute before
+// the last labour entry - the chart and the print end at the birth and would
+// drop the labour after it. The form takes whole minutes and an entry keeps
+// its seconds, so a birth typed in that entry's minute is stored at the
+// entry's own time (birthStoredTime): nothing recorded in labour falls after it.
+//
 // M5: every label goes through t() ('fm.' keys in js/i18n/forms.js); the
 // stored values stay codes. English on purpose, until the clinical panel
 // validates a translation: the AMTSL steps and the PPH bundle (drug doses,
@@ -25,7 +31,7 @@ import {
 import { t } from '../i18n.js';
 import { S, savePatient, getBy, setBy } from '../store.js';
 import {
-  LIMITS, POSTPARTUM, getProtocol, dueList, inPostpartumWatch, birthTime, stageOf, hoursBetween,
+  LIMITS, POSTPARTUM, POSTPARTUM_TYPES, getProtocol, dueList, inPostpartumWatch, birthTime, stageOf, hoursBetween,
   activeObs, byTime, fmtMin, toMs,
 } from '../protocol.js';
 import { AMTSL_STEPS, FLAG, PPH_BUNDLE, pphTrigger, bloodLossTotal, haemodynamicSigns } from '../alerts.js';
@@ -76,11 +82,6 @@ const BIRTH_ANSWERS = [
   ['placentaComplete', 'fm.birth.ans.placenta'],
   ['perineum', 'fm.birth.ans.perineum'],
 ];
-
-// Postpartum entries a corrected birth record leaves in the entries. dueList,
-// postpartumBPCount and urinePassedSinceBirth count them only at or after the
-// birth time, so a birth recorded again may not be later than any of them.
-const PP_ENTRY_TYPES = ['ppMother', 'ppBaby', 'bloodloss'];
 
 // Due chips age with the clock, and the app's tick redraws only the header.
 const WATCH_REFRESH_MS = 30000;
@@ -172,10 +173,11 @@ function birthForm(p) {
   const checklist = (items, target) => h('div', { class: 'checklist' }, items.map(([code, label]) =>
     h('label', null, h('input', { type: 'checkbox', onchange: e => { target[code] = e.target.checked; } }), label)));
 
-  // a stillbirth asks when the baby died; an explicit answer outlives outcome changes
+  // a stillbirth asks when the baby died; an explicit answer outlives outcome changes.
+  // field() makes the answer buttons a named group, never a <label> (ui.js)
   const timingWrap = h('div');
   const paintTiming = () => timingWrap.replaceChildren(...(m.outcome === 'live' ? [] : [
-    choiceField(t('fm.birth.sbWhen'), segmented(labelled(SB_TIMING), m.sbTiming, v => { m.sbTiming = v; m.sbChosen = true; })),
+    field(t('fm.birth.sbWhen'), segmented(labelled(SB_TIMING), m.sbTiming, v => { m.sbTiming = v; m.sbChosen = true; })),
   ]));
   const setOutcome = v => {
     m.outcome = v;
@@ -246,7 +248,7 @@ function birthForm(p) {
     saving = true; // stays set once saved: the tab is redrawn as the birth summary
     let result;
     try {
-      const { delivery, newborn } = birthRecord(m, time);
+      const { delivery, newborn } = birthRecord(m, birthStoredTime(time, p));
       root.dataset.saved = '1';
       // the birth rules (APGAR, retained placenta, stillbirth, PPH trigger) live in the engine (S13)
       result = await commit(p, () => applyBirth(p, delivery, newborn, S.settings, { by }));
@@ -267,15 +269,22 @@ function birthForm(p) {
 
 /**
  * The first missing or impossible answer on the birth form, or null. The
- * unanswered facts are named together. Given the case p, a birth time later
- * than a postpartum check that survived a corrected birth record is refused
- * (PP_ENTRY_TYPES). No DOM: exported for the tests.
+ * unanswered facts are named together. Given the case p, the entries bound
+ * the birth time, for a first birth record and a corrected one alike: it may
+ * not fall in a minute before the last labour entry (lastLabourEntry), and,
+ * stored as birthStoredTime stores it, not after a postpartum check that
+ * survived a corrected birth record (firstPostpartumEntry). No DOM: exported
+ * for the tests.
  */
 export function birthProblem(m, time, by, p = null) {
   if (!time) return t('fm.birth.needTime');
   if (new Date(time) > new Date()) return t('fm.birth.timeFuture');
+  const last = p ? lastLabourEntry(p) : null;
+  if (last && minuteOf(time) < minuteOf(last.time)) {
+    return t('fm.birth.beforeLabour', { time: checkTime(last.time, time) });
+  }
   const check = p ? firstPostpartumEntry(p) : null;
-  if (check && toMs(time) > toMs(check.time)) {
+  if (check && toMs(birthStoredTime(time, p)) > toMs(check.time)) {
     return t('fm.birth.afterCheck', { time: checkTime(check.time, time) });
   }
   const missing = BIRTH_ANSWERS.filter(([key]) => m[key] == null).map(([, label]) => t(label));
@@ -285,20 +294,48 @@ export function birthProblem(m, time, by, p = null) {
   return null;
 }
 
-/** The earliest postpartum entry that is not voided, or null. */
+/**
+ * The time the birth is stored at: as typed, except in the minute of the last
+ * labour entry - the form takes whole minutes, an entry keeps its seconds
+ * (the pushing mark, then the birth) - where it is that entry's own time,
+ * never before it, so nothing recorded in labour falls after the birth.
+ * Pure: exported for the tests.
+ */
+export function birthStoredTime(time, p) {
+  const last = p ? lastLabourEntry(p) : null;
+  if (!last || minuteOf(time) !== minuteOf(last.time) || toMs(time) >= toMs(last.time)) return time;
+  return last.time;
+}
+
+/** Whole minutes since the epoch: the precision of the form's time (Addis Ababa is a whole-hour offset). */
+const minuteOf = iso => Math.floor(toMs(iso) / 60000);
+
+/** The non-voided entries of the case with a valid time, by kind: postpartum checks or labour entries. */
+const entriesOf = (p, postpartum) => activeObs(p)
+  .filter(o => POSTPARTUM_TYPES.includes(o.type) === postpartum && Number.isFinite(toMs(o.time)));
+
+/**
+ * The earliest postpartum check that is not voided, or null. dueList,
+ * postpartumBPCount and urinePassedSinceBirth count these checks only from the
+ * birth on, so a birth recorded again may not be later than any of them.
+ */
 function firstPostpartumEntry(p) {
-  let first = null;
-  for (const o of activeObs(p)) {
-    if (!PP_ENTRY_TYPES.includes(o.type) || !Number.isFinite(toMs(o.time))) continue;
-    if (!first || toMs(o.time) < toMs(first.time)) first = o;
-  }
-  return first;
+  return entriesOf(p, true).reduce((a, o) => (!a || toMs(o.time) < toMs(a.time) ? o : a), null);
+}
+
+/**
+ * The latest non-voided entry recorded in labour - any observation but a
+ * postpartum check (POSTPARTUM_TYPES), the pushing mark included - or null.
+ * The chart and the print end at the birth: a birth before it would drop it.
+ */
+function lastLabourEntry(p) {
+  return entriesOf(p, false).reduce((a, o) => (!a || toMs(o.time) > toMs(a.time) ? o : a), null);
 }
 
 // Calendar day in Addis Ababa time (YYYY-MM-DD), as the time input shows it.
 const eatDay = iso => isoToLocalInput(iso).slice(0, 10);
 
-/** The check's time; with its date when that is not the day typed for the birth (labour runs past midnight). */
+/** An entry's time; with its date when that is not the day typed for the birth (labour runs past midnight). */
 const checkTime = (at, birth) => (eatDay(at) === eatDay(birth) ? fmtTime(at) : fmtDT(at));
 
 function birthRecord(m, time) {
@@ -364,7 +401,7 @@ function birthCard(p, root) {
       h('span', { style: 'display:flex;gap:6px' }, apgarChip(n.apgar1), apgarChip(n.apgar5), apgarChip(n.apgar10))),
     n.resus ? kv(t('fm.birth.resusLabel'), n.resusDetail || t('yes')) : null,
     kv(t('fm.birth.placentaLabel'), d.placentaComplete === 'Y' ? t('fm.birth.complete') : '⚠ ' + t('fm.birth.incomplete')),
-    d.eblMl != null ? kv(t('fm.birth.eblLabel'), d.eblMl + ' ml' + (FLAG.bloodLoss(d.eblMl) ? ' ⚠' : '')) : null,
+    d.eblMl != null ? kv(t('fm.birth.eblLabel'), d.eblMl + ' mL' + (FLAG.bloodLoss(d.eblMl) ? ' ⚠' : '')) : null,
     kv(t('fm.birth.perineum'), perineum ? t(perineum.key) : d.perineum),
     kv(t('fm.birth.recordedBy'), d.by || '-'),
     earlier ? h('p', { class: 'muted' }, t(earlier > 1 ? 'fm.birth.earlierN' : 'fm.birth.earlier1', { n: earlier })) : null,
@@ -374,12 +411,28 @@ function birthCard(p, root) {
   );
 }
 
+/**
+ * What correcting the birth record does, one line each (S5). A woman who has
+ * left on referral stays referred and off the ward board (record.js
+ * voidDelivery): her labour monitoring does not resume, and her line says so.
+ * Pure: exported for the tests.
+ */
+export function correctBirthLines(p) {
+  const left = !!(p.referral && p.referral.handoverAt);
+  return [
+    t('fm.birth.correctLine1'),
+    left ? t('fm.birth.correctLine2Left') : t('fm.birth.correctLine2'),
+    t('fm.birth.correctLine3'),
+    t('fm.birth.correctLine4'),
+  ];
+}
+
 /** S5: the wrong birth record moves to the case history; the birth form returns. */
 async function correctBirth(p, root) {
   const res = await promptDialog({
     title: t('fm.birth.correct'),
     message: t('fm.birth.correctMsg'),
-    lines: [t('fm.birth.correctLine1'), t('fm.birth.correctLine2'), t('fm.birth.correctLine3'), t('fm.birth.correctLine4')],
+    lines: correctBirthLines(p),
     needReason: true, by: getBy(), okLabel: t('fm.birth.moveToHistory'), danger: true,
   });
   if (!res) return;
@@ -656,16 +709,5 @@ function watchGuidance(p) {
 }
 
 // -------------------------------------------------------------- helpers ----
-
-/**
- * A labelled question. A <label> forwards a tap on its text to its first
- * button, which would silently pick the first answer.
- */
-function choiceField(labelText, control) {
-  return h('label', {
-    class: 'field',
-    onclick: e => { if (!e.target.closest('button, input, select, textarea')) e.preventDefault(); },
-  }, h('span', null, labelText), control);
-}
 
 function kv(k, v) { return h('div', { class: 'kv' }, h('b', null, k), h('span', null, v)); }

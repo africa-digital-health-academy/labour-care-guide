@@ -85,6 +85,9 @@ export const PROTOCOLS = {
 // refinements of those same alert values.
 export const LIMITS = {
   fhr: { low: 110, high: 160, severeLow: 100, severeHigh: 180 },
+  // PANEL-TO-CONFIRM: FHR interval (min) while an alert asks for closer FHR
+  // monitoring (CLOSE_FHR_CODES); its advice is worded from this value
+  fhrCloseMin: 15,
   pulse: { low: 60, high: 120, severeHigh: 140 },
   sys: { shock: 80, high: 140, severe: 160 },
   dia: { high: 90, severe: 110 },
@@ -132,6 +135,18 @@ export const POSTPARTUM = {
 };
 
 export const GRACE_MIN = 10; // minutes past due before a chip turns red - no hard lock-outs
+
+// The alerts whose advice asks for closer FHR monitoring (alerts.js words it
+// from LIMITS.fhrCloseMin): thick meconium ("monitor FHR every N min"), an
+// abnormal FHR and decelerations ("re-check FHR in 5-N minutes"). While one is
+// open the FHR is due every LIMITS.fhrCloseMin minutes in labour, unless the
+// stage asks for it more often (second stage: every 5 min); once it closes
+// the stage interval is back.
+export const CLOSE_FHR_CODES = Object.freeze(['liquor_thick_mec', 'fhr_abn', 'fhr_severe', 'decel']);
+
+// The checks the postpartum watch records (N4). Every other entry - an
+// observation, the pushing mark - is recorded in labour.
+export const POSTPARTUM_TYPES = Object.freeze(['ppMother', 'ppBaby', 'bloodloss']);
 
 // ------------------------------------------------------------- helpers ----
 
@@ -347,6 +362,17 @@ export function birthTime(p) {
   return (p.delivery && p.delivery.time) || null;
 }
 
+/**
+ * Whether entry o counts as made after the birth at `birth`: a postpartum
+ * check from the birth itself on, any other entry only after it. An entry at
+ * the birth itself was recorded in labour: the birth form stores a birth typed
+ * in the minute of the last labour entry at that entry's own time.
+ */
+export function afterBirthEntry(o, birth) {
+  const t = toMs(o.time), b = toMs(birth);
+  return POSTPARTUM_TYPES.includes(o.type) ? t >= b : t > b;
+}
+
 /** Postpartum watch: the first 24 h after birth (rec 55), unless closed or handed over. */
 export function inPostpartumWatch(p, now = new Date()) {
   const t = birthTime(p);
@@ -364,14 +390,14 @@ export function postpartumPhase(p, at) {
   return POSTPARTUM.phases.find(ph => min < ph.untilMin) || null;
 }
 
-/** BP readings since birth: the birth form's first check plus later ones. */
+/** BP readings since birth: the birth form's first check plus later ones (a labour BP at the birth itself is not one). */
 export function postpartumBPCount(p) {
   const t = birthTime(p);
   if (!t) return 0;
   const pv = p.delivery.ppVitals;
   const first = pv && pv.sys != null && pv.dia != null ? 1 : 0;
   return first + activeObs(p).filter(o => (o.type === 'ppMother' || o.type === 'vitals')
-    && toMs(o.time) >= toMs(t) && o.v && o.v.sys != null && o.v.dia != null).length;
+    && afterBirthEntry(o, t) && o.v && o.v.sys != null && o.v.dia != null).length;
 }
 
 export function urinePassedSinceBirth(p) {
@@ -389,7 +415,16 @@ export function babyWatched(p) {
   return !outcome || outcome === 'live';
 }
 
-/** Assessment intervals (minutes) in force for a case at `now`. */
+/** Whether an alert asking for closer FHR monitoring (CLOSE_FHR_CODES) is open. */
+const closeFhrAsked = p => (p.alerts || []).some(a => a && !a.resolved && CLOSE_FHR_CODES.includes(a.code));
+
+/**
+ * Assessment intervals (minutes) in force for a case at `now`. In labour, while
+ * an alert asks for closer FHR monitoring the FHR is due every
+ * LIMITS.fhrCloseMin minutes, as its advice says - in the latent phase too -
+ * and a stage that asks for it more often keeps its own interval (second
+ * stage); the interval follows the open alerts, so it is back once they close.
+ */
 export function scheduleFor(p, proto, now = new Date()) {
   if (!isLabouring(p)) {
     const ph = inPostpartumWatch(p, now) ? postpartumPhase(p, now) : null;
@@ -400,6 +435,7 @@ export function scheduleFor(p, proto, now = new Date()) {
   const key = stage === 'latent' ? 'latent' : stage === 'second' ? 'second' : 'active';
   const sched = { ...proto.schedules[key] };
   if (p.oxytocinRunning) sched.oxytocin = proto.oxytocinCheckMin;
+  if (sched.baby && closeFhrAsked(p)) sched.baby = Math.min(sched.baby, LIMITS.fhrCloseMin);
   return sched;
 }
 
@@ -417,7 +453,8 @@ function dueItem(type, intervalMin, last, fromISO, now) {
 /**
  * Due status of every scheduled item, most urgent first:
  * [{type, intervalMin, last, dueAt, state: 'ok'|'due'|'overdue', overdueMin}].
- * Labour: recurring items from the stage schedule; oxytocin from the infusion
+ * Labour: recurring items from the stage schedule (the FHR closer while an
+ * alert asks for it, scheduleFor); oxytocin from the infusion
  * start, then from each dose record (F10). Postpartum watch (N4): mother and
  * baby checks by phase, plus the one-off BP and urine items of rec 55.
  */

@@ -51,7 +51,7 @@ test('haemodynamic cut-offs: pulse > 100, systolic < 100, diastolic < 60, shock 
   assert.deepEqual(sign({ pulse: 80, sys: 99, dia: 70 }), ['systolic 99']);
   assert.deepEqual(sign({ pulse: 80, sys: 100, dia: 60 }), []);
   assert.deepEqual(sign({ pulse: 80, sys: 110, dia: 59 }), ['diastolic 59']);
-  assert.ok(sign({ pulse: 110, sys: 105, dia: 70 }).includes('shock index 1.0'));
+  assert.ok(sign({ pulse: 110, sys: 105, dia: 70 }).includes('shock index 1.05'));
 });
 
 test('drape readings are cumulative: the total is the highest reading, and the birth estimate counts', () => {

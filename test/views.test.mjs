@@ -5,18 +5,23 @@
 // a postpartum check that survived it, and closing a case has a tested rule
 // and writes known fields. M5: the form messages come from t() - the expected
 // texts are built with t(), and the message checks run in English and Amharic -
-// while the referral record keeps storing English text.
+// while the referral record keeps storing English text. M6: a birth is never
+// before the last labour entry, and a birth typed in its minute is stored at
+// its time; units are written mL; correcting the birth of a woman who has left
+// says her monitoring does not resume.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { birthProblem } from '../js/views/delivery.js';
+import { readFileSync } from 'node:fs';
+import { birthProblem, birthStoredTime, correctBirthLines } from '../js/views/delivery.js';
 import { admissionProblem } from '../js/views/admission.js';
 import { referralRecord, transportText, riskText, givenMeds, medLine, buildShareText, medsShareLine } from '../js/views/referral.js';
 import { recordTypes, admissionExamText, canClose, closeFields } from '../js/views/patient.js';
-import { applyBirth, applyObservations, voidObservation, voidDelivery } from '../js/record.js';
-import { postpartumBPCount, urinePassedSinceBirth, LIMITS } from '../js/protocol.js';
+import { applyBirth, applyObservations, voidObservation, voidDelivery, recordEvent } from '../js/record.js';
+import { postpartumBPCount, urinePassedSinceBirth, LIMITS, activeObs, isLabouring } from '../js/protocol.js';
 import { fmtTime, fmtDT } from '../js/ui.js';
 import { t, setLang } from '../js/i18n.js';
 import { en as formsEN, am as formsAM } from '../js/i18n/forms.js';
+import { en as wizardEN, am as wizardAM } from '../js/i18n/wizard.js';
 import { iso, mkPatient, LCG } from './helpers.mjs';
 
 /** Run fn once per screen language; English is restored afterwards. */
@@ -115,8 +120,8 @@ test('referral record: reasons and checklist labels are stored in English whatev
   assert.deepEqual(r.checklist.map(c => c.code),
     ['iv', 'fluids', 'mgso4', 'antihtn', 'catheter', 'position', 'called', 'ambulance', 'escort', 'family']);
   const label = code => r.checklist.find(c => c.code === code).label;
-  // the dose text is clinical: it must never change by accident
-  assert.equal(label('mgso4'), 'MgSO₄ loading dose given — 4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 ml lidocaine 2%)');
+  // the dose text is clinical: it must never change by accident (M6: mL, on purpose)
+  assert.equal(label('mgso4'), 'MgSO₄ loading dose given — 4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 mL lidocaine 2%)');
   assert.equal(label('antihtn'), `Antihypertensive given (if BP ≥ ${LIMITS.sys.severe}/${LIMITS.dia.severe})`);
   assert.equal(label('iv'), 'IV line secured (16–18G)');
   assert.deepEqual(r.checklist.filter(c => c.done).map(c => c.code), ['mgso4']);
@@ -213,6 +218,103 @@ test('birth form: a check on another day than the typed birth time is named with
   inEachLanguage(() => {
     assert.equal(birthProblem(answered, '2026-06-12T21:10:00.000Z', 'TE', p), t('fm.birth.afterCheck', { time: fmtDT(checkAt) }));
   });
+});
+
+// ----------------------- M6: the birth is never before the labour entries -----
+// The form takes whole minutes (10:43 is 10:43:00); the entries keep their
+// seconds. Found on the M6 walk: a birth at 10:43:00 came before its 10 cm exam
+// (10:43:28) and pushing mark (10:43:37), and a birth timed 2 h back saved
+// cleanly - the chart and the print end at the birth and dropped the rest.
+
+const sec = (min, s) => new Date(Date.UTC(2026, 5, 12, 7, min, s)).toISOString();
+const beforeLabour = o => t('fm.birth.beforeLabour', { time: fmtTime(o.time) });
+const laterThanBirth = p => activeObs(p).filter(o => new Date(o.time) > new Date(p.delivery.time));
+
+/** Active from 06:00 (6 cm); 10 cm at 10:43:28, the pushing mark at 10:43:37. */
+function pushing() {
+  const p = mkPatient({ createdAt: at(-300), admission: { time: at(-300) }, status: 'latent', activeStartTime: null });
+  applyObservations(p, at(-240), { exam: { dilatation: 6 } }, LCG, { by: 'TE' });
+  const ten = applyObservations(p, sec(43, 28), { exam: { dilatation: 10 } }, LCG, { by: 'TE' }).obs[0];
+  const push = recordEvent(p, 'pushing', sec(43, 37), LCG, { by: 'TE' }).event;
+  return { p, ten, push };
+}
+
+test('M6: a birth may not fall in a minute before the last labour entry; typed in its minute it is stored at its time', () => {
+  const { p, push } = pushing();
+  inEachLanguage(() => {
+    assert.equal(birthProblem(answered, sec(43, 0), 'TE', p), null, 'the minute of the pushing mark');
+    assert.equal(birthProblem(answered, sec(42, 0), 'TE', p), beforeLabour(push), 'the minute before it');
+    assert.equal(birthProblem(answered, at(-77), 'TE', p), beforeLabour(push), 'two hours back');
+    assert.equal(birthProblem(answered, sec(44, 0), 'TE', p), null);
+  });
+  assert.equal(birthStoredTime(sec(43, 0), p), push.time, 'stored at the pushing mark, never before it');
+  assert.equal(birthStoredTime(sec(44, 0), p), sec(44, 0), 'a later minute is stored as typed');
+  assert.equal(birthStoredTime(sec(43, 0), mkPatient()), sec(43, 0), 'no labour entry: as typed');
+  applyBirth(p, { time: birthStoredTime(sec(43, 0), p), mode: 'svd', outcome: 'live', ppVitals: {} }, {}, LCG, { by: 'TE' });
+  assert.deepEqual(laterThanBirth(p), [], 'nothing recorded in labour falls after the birth');
+});
+
+test('M6: a voided labour entry sets no bound: the last one standing does', () => {
+  const { p, ten, push } = pushing();
+  voidObservation(p, push.id, LCG, { by: 'TE', reason: 'pressed by mistake' });
+  assert.equal(birthStoredTime(sec(43, 0), p), ten.time, 'the 10 cm exam is the last labour entry now');
+  voidObservation(p, ten.id, LCG, { by: 'TE', reason: 'examined the wrong woman' });
+  assert.equal(birthProblem(answered, sec(42, 0), 'TE', p), null, 'the 06:00 exam bounds it now');
+  assert.equal(birthStoredTime(sec(43, 0), p), sec(43, 0));
+});
+
+test('M6: a corrected birth record is bounded the same way: not before the labour entries, not after a postpartum check', () => {
+  // the walk: a birth saved two hours back hid the last hour of labour; the record is corrected
+  const { p, push } = pushing();
+  applyBirth(p, { time: at(-77), mode: 'svd', outcome: 'live', ppVitals: {} }, {}, LCG, { by: 'TE' });
+  const check = applyObservations(p, sec(55, 0), motherCheck, LCG, { by: 'TE' }).obs[0];
+  voidDelivery(p, LCG, { by: 'TE', reason: 'wrong birth time' });
+  inEachLanguage(() => {
+    assert.equal(birthProblem(answered, at(-77), 'TE', p), beforeLabour(push), 'the wrong time again');
+    assert.equal(birthProblem(answered, sec(43, 0), 'TE', p), null, 'the minute of the pushing mark');
+    assert.equal(birthProblem(answered, sec(50, 0), 'TE', p), null, 'between the labour and the postpartum entries');
+    assert.equal(birthProblem(answered, sec(56, 0), 'TE', p), tooLate(check), 'after the postpartum check');
+  });
+  assert.equal(birthStoredTime(sec(43, 0), p), push.time);
+  // the time as stored is checked: typed 10:43 is 10:43:37, after a check at 10:43:30
+  const q = pushing().p;
+  const early = applyObservations(q, sec(43, 30), motherCheck, LCG, { by: 'TE' }).obs[0];
+  assert.equal(birthProblem(answered, sec(43, 0), 'TE', q), tooLate(early));
+  voidObservation(q, early.id, LCG, { by: 'TE', reason: 'timed wrongly' });
+  assert.equal(birthProblem(answered, sec(43, 0), 'TE', q), null);
+});
+
+test('M6: correcting the birth record of a woman who has left on referral does not say her monitoring resumes', () => inEachLanguage(() => {
+  const born = extra => mkPatient({ status: 'delivered', delivery: { time: iso(2) }, ...extra });
+  const here = born();
+  const waiting = born({ status: 'referred', referral: { time: iso(1), handoverAt: null } });
+  const left = born({ status: 'referred', referral: { time: iso(1), handoverAt: iso(0.5) } });
+  const lines = ['fm.birth.correctLine1', 'fm.birth.correctLine2', 'fm.birth.correctLine3', 'fm.birth.correctLine4'].map(k => t(k));
+  assert.deepEqual(correctBirthLines(here), lines);
+  assert.deepEqual(correctBirthLines(waiting), lines, 'referred, not gone: monitored in labour again (S8)');
+  assert.deepEqual(correctBirthLines(left), [lines[0], t('fm.birth.correctLine2Left'), lines[2], lines[3]]);
+  // the dialog says what the record layer does
+  for (const [p, resumes] of [[here, true], [waiting, true], [left, false]]) {
+    const q = structuredClone(p);
+    voidDelivery(q, LCG, { by: 'TE', reason: 'wrong woman' });
+    assert.equal(isLabouring(q), resumes);
+    assert.equal(correctBirthLines(p)[1] === t('fm.birth.correctLine2'), resumes);
+  }
+}));
+
+test('M6: units are written mL, never ml - the form and wizard strings, the birth view and the alerts', () => {
+  const unit = /\d ?ml\b|\(ml\)|' ml\b|(^|\s)ml(\s|$)/;
+  const strip = s => s.replace(/\{\w+\}/g, '');
+  for (const dict of [formsEN, formsAM, wizardEN, wizardAM]) {
+    for (const [k, v] of Object.entries(dict)) assert.doesNotMatch(strip(v), unit, k);
+  }
+  assert.match(formsEN['fm.birth.ebl'], /\(mL\)/);
+  assert.match(formsAM['fm.birth.ebl'], /\(mL\)/);
+  // the unit after a number, in brackets or ending a string - not a variable named ml
+  for (const file of ['views/delivery.js', 'alerts.js']) {
+    const src = readFileSync(new URL(`../js/${file}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /\d ?ml\b| \(ml\)| ml['`]/, file);
+  }
 });
 
 // ------------------------------------------------ M4: closing a case ------

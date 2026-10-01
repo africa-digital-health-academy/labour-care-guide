@@ -166,20 +166,23 @@ const labourEnd = p => labourEnds(p)[0] || null;
 
 /**
  * The end a labour finding made at time t closes at, once labour has ended:
- * the first end after t - the birth, or her departure when she left after
- * it. null while she is in labour, and for a finding after every end (an
- * oxytocin check after the birth while she is still here), which stands.
+ * the first end at or after t - the birth, or her departure when she left
+ * after it. An entry at the birth itself was made in labour: the birth form
+ * stores a birth typed in the minute of the last labour entry at that entry's
+ * own time. null while she is in labour, and for a finding after every end
+ * (an oxytocin check after the birth while she is still here), which stands.
  */
-const endAfter = (p, t) => labourEnds(p).find(e => toMs(t) < toMs(e.at)) || null;
+const endAfter = (p, t) => labourEnds(p).find(e => toMs(t) <= toMs(e.at)) || null;
 
 /**
- * The stage an entry made at time t is judged in: the labour stage at t; from
- * the end of labour on (birth, departure), the case's own stage, as the rules
- * read it for an entry made now (delivered, referred, closed).
+ * The stage an entry made at time t is judged in: the labour stage at t, also
+ * at the end itself (endAfter); after the end of labour (birth, departure),
+ * the case's own stage, as the rules read it for an entry made now
+ * (delivered, referred, closed).
  */
 function stageThen(p, snap, t) {
   const end = labourEnd(p);
-  return end && toMs(t) >= toMs(end.at) ? monitoringStage(p) : stageAt(snap, t);
+  return end && toMs(t) > toMs(end.at) ? monitoringStage(p) : stageAt(snap, t);
 }
 
 /**

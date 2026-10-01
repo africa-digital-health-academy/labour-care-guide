@@ -1021,6 +1021,29 @@ test('M6: an alert acknowledged in labour is not asked again by a correction aft
   assert.deepEqual(c.added, []);
 });
 
+// ----------------------- M6: an entry at the birth itself was made in labour ----
+// The birth form stores a birth typed in the minute of the last labour entry at
+// that entry's own time (views/delivery.js birthStoredTime).
+
+test('M6: an entry at the birth itself is judged in its labour stage, and its labour finding closes at the birth', () => {
+  // a caesarean section in the active first stage: 6 cm since 7 h ago, the birth at the time of the last exam
+  const p = admitted(8);
+  applyObservations(p, iso(7), { exam: { dilatation: 6 } }, LCG, { enteredAt: iso(7) });
+  const exam = applyObservations(p, iso(1), { exam: { dilatation: 6, descent: 3 } }, LCG, { by: 'TE', enteredAt: iso(1) }).obs[0];
+  assert.deepEqual(exam.flags, ['lcg_progress']);
+  const first = p.alerts.find(a => a.code === 'lcg_progress');
+  applyBirth(p, { time: exam.time, mode: 'cs', outcome: 'live', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  assert.deepEqual([first.resolvedHow, first.resolvedAt], ['birth', exam.time]);
+  const c = correctObservation(p, exam.id, { dilatation: 6, descent: 2 }, LCG, { by: 'TE', reason: 'descent mistyped', at: AT });
+  assert.deepEqual(c.obs[0].flags, ['lcg_progress'], 'judged in the active first stage it was taken in, not as after the birth');
+  const again = p.alerts.find(a => a.code === 'lcg_progress' && a !== first);
+  assert.deepEqual([again.resolved, again.resolvedHow, again.resolvedAt, again.needsAck], [true, 'birth', exam.time, false]);
+  assert.deepEqual([c.added, p.alerts.filter(a => !a.resolved)], [[], []], 'nothing asked, nothing left open');
+  // after the birth itself an entry stands as before: an oxytocin rate is asked as usual
+  const later = applyObservations(p, iso(0.9), { oxytocin: { dropsMin: 70 } }, LCG, { by: 'TE' });
+  assert.deepEqual([codes(later.added), later.added[0].resolved], [['oxy_rate'], false]);
+});
+
 test('M6: the referral note states its plan in words, as the summary and the chart plan row show it', () => {
   const p = mkPatient();
   applyReferral(p, { time: iso(1), reasons: ['Prolonged labour'], facility: 'Hospital' }, { by: 'TE' });

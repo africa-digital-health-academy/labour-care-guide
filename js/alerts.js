@@ -27,7 +27,7 @@
 import {
   LIMITS, getProtocol, parityKey, byParity, PARITY_LABEL, exams, timeReachedCurrentDilatation,
   lineStatus, monitoringStage, isLabouring, hoursBetween, minutesBetween, fmtMin, toMs, byTime,
-  activeObs, secondStageClockStart, secondStagePushing, birthTime,
+  activeObs, secondStageClockStart, secondStagePushing, birthTime, afterBirthEntry,
 } from './protocol.js';
 import { uid } from './db.js';
 
@@ -41,21 +41,23 @@ const nowISO = () => new Date().toISOString();
 const REFER_PREP = 'If not resolving: arrange referral early - call the receiving hospital and the ambulance now; transport takes time.';
 const SENIOR = 'Alert a senior midwife or doctor; record the assessment and the action taken';
 const VERIFY_10 = 'Count again over another 10 minutes; if confirmed, alert a senior provider';
+// The re-check interval is the FHR schedule's own while these alerts are open
+// (protocol.js LIMITS.fhrCloseMin, CLOSE_FHR_CODES), so advice and due chip agree.
 const INTRAUTERINE_RESUS = [
   'Turn the woman onto her LEFT side',
   'Give IV fluids (Normal Saline / Ringer’s Lactate)',
   'Stop oxytocin if running',
-  'Re-check FHR in 5–15 minutes, listen through a contraction + 30 s after',
+  `Re-check FHR in 5–${LIMITS.fhrCloseMin} minutes, listen through a contraction + 30 s after`,
 ];
 /**
  * MgSO4 loading dose (Pritchard regimen: 4 g of the 20% solution IV, then
- * 10 g of the 50% solution IM, 5 g in each buttock with 1 ml of 2% lidocaine
+ * 10 g of the 50% solution IM, 5 g in each buttock with 1 mL of 2% lidocaine
  * in the same syringe; MOH 2021, WHO MCPC). One source for the severe
  * hypertension alert, the eclampsia card and the pre-referral checklist; a
  * drug dose, so it stays in English in every language until the clinical
  * panel validates a translation. PANEL-TO-CONFIRM: wording and IV duration.
  */
-export const MGSO4_LOADING = '4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 ml lidocaine 2%)';
+export const MGSO4_LOADING = '4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 mL lidocaine 2%)';
 
 const SEVERE_HTN = [
   'Check urine protein NOW', 'Severe pre-eclampsia until proven otherwise',
@@ -109,7 +111,7 @@ export const FLAG = {
 function liquorRule(v) {
   if (v.liquor === 'M3') {
     return [A('liquor_thick_mec', 'danger', 'Thick meconium-stained amniotic fluid (M+++)',
-      [SENIOR, 'Monitor FHR every 15 min', 'Prepare newborn resuscitation equipment', 'Consider referral if combined with abnormal FHR or slow progress'])];
+      [SENIOR, `Monitor FHR every ${LIMITS.fhrCloseMin} min`, 'Prepare newborn resuscitation equipment', 'Consider referral if combined with abnormal FHR or slow progress'])];
   }
   if (v.liquor === 'B') {
     return [A('liquor_blood', 'danger', 'Blood-stained amniotic fluid',
@@ -201,11 +203,17 @@ export const AMTSL_STEPS = [
   ['tone', 'Uterine tone checked by abdominal palpation after the placenta'],
 ];
 
-function inPPHWindow(p, at) {
+// The mother's entries re-check the PPH trigger after the birth (N3): a
+// blood-loss reading, a postpartum mother check, a pulse or a BP can complete
+// it. A baby check never does: it would join the PPH alert and count as one
+// more sighting of a haemorrhage it says nothing about.
+const PPH_ENTRY_TYPES = ['bloodloss', 'ppMother', 'pulse', 'vitals'];
+
+/** Whether entry o is one of the mother's entries made in the 24 h after birth (an entry at the birth itself was made in labour). */
+function inPPHWindow(p, o) {
   const t = birthTime(p);
-  if (!t) return false;
-  const h = hoursBetween(t, at);
-  return h >= 0 && h <= LIMITS.pph.windowHours;
+  if (!t || !PPH_ENTRY_TYPES.includes(o.type) || !afterBirthEntry(o, t)) return false;
+  return hoursBetween(t, o.time) <= LIMITS.pph.windowHours;
 }
 
 /**
@@ -225,7 +233,12 @@ export function bloodLossTotal(p, at) {
   return total;
 }
 
-/** Abnormal haemodynamic signs (PPH 2025) from the latest pulse and BP taken after birth, up to `at`. */
+/**
+ * Abnormal haemodynamic signs (PPH 2025) from the latest pulse and BP taken
+ * after birth, up to `at`; a labour pulse or BP at the birth itself is not one
+ * (afterBirthEntry). The shock index shows two decimals: 125/120 is 1.04, never
+ * a "1.0" beside "above 1".
+ */
 export function haemodynamicSigns(p, at) {
   const birth = birthTime(p);
   if (!birth) return [];
@@ -236,7 +249,7 @@ export function haemodynamicSigns(p, at) {
   if (pv && pv.sys != null) { sys = pv.sys; dia = pv.dia ?? null; bpT = from; }
   for (const o of activeObs(p)) {
     const t = toMs(o.time);
-    if (t < from || t > to || !o.v) continue;
+    if (!afterBirthEntry(o, birth) || t > to || !o.v) continue;
     if ((o.type === 'pulse' || o.type === 'ppMother') && o.v.pulse != null && t >= pulseT) { pulse = o.v.pulse; pulseT = t; }
     if ((o.type === 'vitals' || o.type === 'ppMother') && o.v.sys != null && t >= bpT) { sys = o.v.sys; dia = o.v.dia ?? null; bpT = t; }
   }
@@ -245,7 +258,7 @@ export function haemodynamicSigns(p, at) {
   if (pulse != null && pulse > S.pulseAbove) out.push(`pulse ${pulse}`);
   if (sys != null && sys < S.sbpBelow) out.push(`systolic ${sys}`);
   if (dia != null && dia < S.dbpBelow) out.push(`diastolic ${dia}`);
-  if (pulse != null && sys > 0 && pulse / sys > S.shockIndexAbove) out.push(`shock index ${(pulse / sys).toFixed(1)}`);
+  if (pulse != null && sys > 0 && pulse / sys > S.shockIndexAbove) out.push(`shock index ${(pulse / sys).toFixed(2)}`);
   return out;
 }
 
@@ -476,8 +489,9 @@ const OBS_RULES = {
 
 /**
  * Evaluate one observation; returns alert drafts (not stored). obs = {type,
- * time, v}. Any entry within 24 h of birth also re-checks the PPH trigger,
- * because a new blood-loss reading or a new pulse/BP can complete it. The
+ * time, v}. The mother's entries within 24 h of birth also re-check the PPH
+ * trigger, because a new blood-loss reading or a new pulse/BP can complete it;
+ * a baby check does not (PPH_ENTRY_TYPES). The
  * contraction and exam rules read the stage and the earlier exams of the case
  * they are given: record.js (judge) gives them the case as it stood at the
  * entry's own time, for a new entry and for an entry judged again alike.
@@ -487,7 +501,7 @@ export function evaluateObs(patient, obs, settings) {
   const rule = OBS_RULES[obs.type];
   const v = Object.assign({}, obs.v, { _time: obs.time });
   const drafts = rule ? rule(v, patient, proto) || [] : [];
-  if (inPPHWindow(patient, obs.time)) drafts.push(...pphDrafts(patient, obs.time));
+  if (inPPHWindow(patient, obs)) drafts.push(...pphDrafts(patient, obs.time));
   return drafts;
 }
 
@@ -853,8 +867,10 @@ export function unlinkObservation(p, obsId, at, by = null) {
 
 /**
  * Findings about the labour itself - the baby in utero, progress, supportive
- * care - close at birth. Maternal findings (pulse, BP, temperature, urine)
- * stay open into the postpartum watch.
+ * care - close when labour monitoring ends on this device: at the birth, or at
+ * her departure on referral (record.js applyBirth and recordEvent 'handover').
+ * Maternal findings (pulse, BP, temperature, urine) stay open into the
+ * postpartum watch.
  */
 export const LABOUR_ONLY = [
   'fhr_abn', 'fhr_severe', 'decel', 'liquor_mec', 'liquor_thick_mec', 'liquor_blood',
