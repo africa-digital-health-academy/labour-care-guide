@@ -477,7 +477,10 @@ const OBS_RULES = {
 /**
  * Evaluate one observation; returns alert drafts (not stored). obs = {type,
  * time, v}. Any entry within 24 h of birth also re-checks the PPH trigger,
- * because a new blood-loss reading or a new pulse/BP can complete it.
+ * because a new blood-loss reading or a new pulse/BP can complete it. The
+ * contraction and exam rules read the stage and the earlier exams of the case
+ * they are given: record.js (judge) gives them the case as it stood at the
+ * entry's own time, for a new entry and for an entry judged again alike.
  */
 export function evaluateObs(patient, obs, settings) {
   const proto = getProtocol(settings, patient);
@@ -784,7 +787,9 @@ export function reconcileAlerts(p, settings) {
 
 /**
  * Time rules: add what fires now, and resolve open time alerts that no longer
- * fire (the condition cleared - e.g. a new exam showed progress).
+ * fire (the condition cleared - e.g. a new exam showed progress). Run by the
+ * heartbeat, and inside a void or a correction (record.js timeRules) so a
+ * stage taken back changes its time alerts in the same save.
  */
 export function refreshTimeAlerts(p, settings, now = new Date()) {
   const at = now.toISOString();

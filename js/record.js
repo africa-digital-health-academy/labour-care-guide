@@ -9,15 +9,22 @@
 // its values and gains voided: {at, by, reason}; a correction is a void plus
 // a new entry that names the one it replaces. Every write re-derives the
 // labour stage from the surviving entries, so voiding a mistyped 10 cm exam
-// takes the woman back to the active first stage with its timers. When that
-// moves a stage start, the entries whose stage at their own time changed are
-// judged again for the stage-gated rules (restage), so their flags, their
-// alerts and the chart circles drawn from both stay in step.
+// takes the woman back to the active first stage with its timers.
+//
+// One judge (judge): every entry, new or judged again, is judged as the case
+// stood at its own time - the stage it was in and the entries made up to then
+// - so a back-timed entry means what it would have meant entered on time, and
+// a later exam never changes what an earlier one meant. When a write moves a
+// stage start or changes an exam, the entries it affects are judged again for
+// the stage-gated rules (restage), so their flags, their alerts and the chart
+// circles drawn from both stay in step.
 
-import { getProtocol, deriveStage, stageSnapshot, toMs, activeObs, byTime, birthTime } from './protocol.js';
+import {
+  getProtocol, deriveStage, stageSnapshot, toMs, activeObs, byTime, birthTime, isLabouring, monitoringStage,
+} from './protocol.js';
 import {
   evaluateObs, addAlerts, reconcileAlerts, birthAlerts, closeTimeAlerts, resolveWhere, reopenWhere,
-  unlinkObservation, LABOUR_ONLY,
+  unlinkObservation, refreshTimeAlerts, LABOUR_ONLY,
 } from './alerts.js';
 import { CASE_SCHEMA } from './migrate.js';
 import { uid } from './db.js';
@@ -111,7 +118,9 @@ function transitions(before, after) {
 // and exam; keep the two in step): weak and short contractions are alert
 // values only once active labour has begun - normal in the latent phase -
 // and the progress rules (LCG time limits, partograph alert and action lines)
-// apply in the active first stage only.
+// apply in the active first stage only. The progress rules also read the
+// exams before the one judged: how long the cervix has stayed at this
+// dilatation, and where the alert line starts.
 const GATED = {
   contractions: { codes: ['weak_contractions', 'contraction_short'], open: stage => stage !== 'latent' },
   exam: { codes: ['lcg_progress', 'alert_line', 'action_line'], open: stage => stage === 'active' },
@@ -126,15 +135,37 @@ function stageAt(snap, t) {
   return 'active';
 }
 
+/** The earliest of some ISO times, or null. */
+const earliest = times => (times.length ? times.reduce((a, b) => (toMs(a) <= toMs(b) ? a : b)) : null);
+
+/** An exam with a dilatation: the stage starts and the progress rules of the exams after it are read from these. */
+const readsProgress = o => !!o && o.type === 'exam' && !!o.v && o.v.dilatation != null;
+
+/** When labour monitoring ended on this device: the birth or her departure, whichever came first; null in labour. */
+const labourEnd = p => earliest([birthTime(p), p.referral && p.referral.handoverAt].filter(validTime));
+
 /**
- * The stage-gated alert drafts of an entry judged at its own time: the case
- * as it stood then (the entries up to that time) in the stage it was in, so a
- * later exam never changes what an earlier one meant.
+ * The stage an entry made at time t is judged in: the labour stage at t; from
+ * the end of labour on (birth, departure), the case's own stage, as the rules
+ * read it for an entry made now (delivered, referred, closed).
  */
-function gatedDrafts(p, o, settings, stage) {
+function stageThen(p, snap, t) {
+  const end = labourEnd(p);
+  return end && !isLabouring(p) && toMs(t) >= toMs(end) ? monitoringStage(p) : stageAt(snap, t);
+}
+
+/**
+ * The judge, for new entries and entries judged again alike: the alert drafts
+ * of an entry with the case as it stood at the entry's own time - the stage it
+ * was in (snap: the stage start times to read it from) and the entries made up
+ * to then - so a back-timed entry means what it would have meant entered on
+ * time, and a later exam never changes what an earlier one meant. An entry
+ * made now is judged exactly as the live case.
+ */
+function judge(p, o, settings, snap = stageSnapshot(p)) {
   const t = toMs(o.time);
-  const then = { ...p, status: stage, obs: activeObs(p).filter(x => toMs(x.time) <= t) };
-  return evaluateObs(then, o, settings).filter(d => GATED[o.type].codes.includes(d.code));
+  const then = { ...p, status: stageThen(p, snap, o.time), obs: activeObs(p).filter(x => toMs(x.time) <= t) };
+  return evaluateObs(then, o, settings);
 }
 
 /**
@@ -166,29 +197,34 @@ function letGo(p, o, code, at, by) {
 }
 
 /**
- * After a stage start moved (a back-timed exam, a void, a correction), judge
- * again the stage-gated codes of each standing entry whose stage at its own
- * time crossed a gate: its flags follow, a code it now raises opens or joins
- * its alert, and a code it no longer raises lets go of its alert, which
- * closes ('restaged') when no entry is left behind it. The chart circles
- * values from these flags and alerts, so it never shows a solid red circle
- * with no alert behind it, nor misses one. An alert a recorded birth would
- * have closed (a labour finding) is closed at the birth, as applyBirth does.
- * Entries without stored flags (v1 records) are charted by value and left
- * alone; `skip` holds the entries the caller has just judged.
- * Returns {added, resolved}.
+ * After a write that moved a stage start or changed an exam (a back-timed
+ * exam, a void, a correction), judge again the stage-gated codes of each
+ * standing entry it affects: an entry whose stage at its own time crossed a
+ * gate, and - the progress rules read the exams before - every exam at or
+ * after `from`, the earliest exam time the write changed. Its flags follow,
+ * a code it now raises opens or joins its alert, and a code it no longer
+ * raises lets go of its alert, which closes ('restaged') when no entry is
+ * left behind it. The chart circles values from these flags and alerts, so
+ * it never shows a solid red circle with no alert behind it, nor misses one.
+ * An alert a recorded birth would have closed (a labour finding) is closed at
+ * the birth, as applyBirth does. Entries without stored flags (v1 records)
+ * are charted by value and left alone; `skip` holds the entries the caller
+ * has just judged. Returns {added, resolved}.
  */
-function restage(p, settings, before, { at, by = null, skip = [] }) {
+function restage(p, settings, before, { at, by = null, skip = [], from = null }) {
   const after = stageSnapshot(p);
-  if (before.activeStartTime === after.activeStartTime && before.secondStageStart === after.secondStageStart) return NONE;
+  const moved = before.activeStartTime !== after.activeStartTime || before.secondStageStart !== after.secondStageStart;
+  if (!moved && !from) return NONE;
+  const since = from ? toMs(from) : Infinity;
   const out = { added: [], resolved: [] };
   const birth = birthTime(p);
-  for (const o of activeObs(p)) {
+  // oldest first: an alert opened here carries the time of its earliest entry
+  for (const o of activeObs(p).sort(byTime)) {
     const gate = GATED[o.type];
     if (!gate || !o.v || !Array.isArray(o.flags) || skip.includes(o)) continue;
-    const stage = stageAt(after, o.time);
-    if (gate.open(stageAt(before, o.time)) === gate.open(stage)) continue;
-    const drafts = gate.open(stage) ? gatedDrafts(p, o, settings, stage) : [];
+    const crossed = gate.open(stageThen(p, before, o.time)) !== gate.open(stageThen(p, after, o.time));
+    if (!crossed && !(o.type === 'exam' && toMs(o.time) >= since)) continue;
+    const drafts = judge(p, o, settings, after).filter(d => gate.codes.includes(d.code));
     const had = o.flags.filter(c => gate.codes.includes(c));
     o.flags = [...o.flags.filter(c => !gate.codes.includes(c)), ...drafts.map(d => d.code)];
     for (const code of had.filter(c => !drafts.some(d => d.code === c))) out.resolved.push(...letGo(p, o, code, at, by));
@@ -210,8 +246,10 @@ function restage(p, settings, before, { at, by = null, skip = [] }) {
  * opts: by (initials), source ('entry' | 'admission'), defaulted ({type:
  * [keys the wizard committed without the midwife touching them]}), replaces
  * (id of the entry this one corrects), enteredAt.
- * Returns {obs, added, resolved, transitions}; added and resolved include the
- * alerts of earlier entries judged again because a stage start moved.
+ * Each entry is judged at its own time (judge): a back-timed entry as it
+ * would have been entered on time. Returns {obs, added, resolved,
+ * transitions}; added and resolved include the alerts of other entries
+ * judged again because a stage start moved or an exam was added before them.
  */
 export function applyObservations(p, timeISO, values, settings, opts = {}) {
   return recordRound(p, timeISO, values, settings, opts, true);
@@ -239,13 +277,15 @@ function recordRound(p, timeISO, values, settings, opts, restaging) {
 
   deriveRom(p);
   deriveStage(p, proto);
+  const snap = stageSnapshot(p);
   const added = [];
   for (const o of created) {
-    const drafts = evaluateObs(p, o, settings);
+    const drafts = judge(p, o, settings, snap);
     o.flags = drafts.map(d => d.code);
     added.push(...addAlerts(p, drafts, 'obs', { time: o.time, obsId: o.id, raisedAt: enteredAt }));
   }
-  const re = restaging ? restage(p, settings, before, { at: enteredAt, by, skip: created }) : NONE;
+  const from = created.some(readsProgress) ? timeISO : null;
+  const re = restaging ? restage(p, settings, before, { at: enteredAt, by, skip: created, from }) : NONE;
   const resolved = reconcileAlerts(p, settings);
   return {
     obs: created, added: [...added, ...re.added], resolved: [...re.resolved, ...resolved],
@@ -256,9 +296,12 @@ function recordRound(p, timeISO, values, settings, opts, restaging) {
 /**
  * Void an entry (append-only). A reason is required. Alerts that rested only
  * on this entry resolve; alerts this entry had cleared re-open; the stage is
- * re-derived, and when a stage start moves the entries it moved across a
- * stage-gated rule are judged again (restage). Returns {entry, before, after,
- * transitions, resolved, reopened, added} - added: alerts the new stage raised.
+ * re-derived, and the entries the void affects are judged again (restage):
+ * those it moved across a stage-gated rule and, for a voided exam, the exams
+ * after it. The time rules then run at the void time (timeRules), so the
+ * time alerts follow in the same save. opts.at: the void time, default now.
+ * Returns {entry, before, after, transitions, resolved, reopened, added} -
+ * added: alerts the entries judged again or the time rules now raise.
  */
 export function voidObservation(p, obsId, settings, opts = {}) {
   return voidEntry(p, obsId, settings, opts, true);
@@ -279,26 +322,41 @@ function voidEntry(p, obsId, settings, { by = null, reason = '', at } = {}, rest
   const { resolved, reopened } = unlinkObservation(p, obsId, when, by);
   deriveRom(p);
   deriveStage(p, getProtocol(settings, p));
-  const re = restaging ? restage(p, settings, before, { at: when, by }) : NONE;
+  const re = restaging ? restage(p, settings, before, { at: when, by, from: readsProgress(o) ? o.time : null }) : NONE;
   const cleared = reconcileAlerts(p, settings);
+  const tick = restaging ? timeRules(p, settings, when) : NONE;
   const after = stageSnapshot(p);
   return {
     entry: o, before, after, transitions: transitions(before, after),
-    resolved: [...resolved, ...re.resolved, ...cleared], reopened: reopened.filter(a => !a.resolved), added: re.added,
+    resolved: [...resolved, ...re.resolved, ...cleared, ...tick.resolved],
+    reopened: reopened.filter(a => !a.resolved), added: [...re.added, ...tick.added],
   };
 }
 
 /**
  * What voiding would change, without changing anything - for the confirm
- * dialog: alert titles that would close (resolved), re-open, or open (added).
+ * dialog: the same void run on a copy (opts.at: the void time, default now),
+ * so it lists exactly what the void will do, the time rules included: alert
+ * titles that would close (resolved), re-open, or open (added).
  */
 export function previewVoid(p, obsId, settings, opts = {}) {
-  const copy = structuredClone(p);
-  const r = voidObservation(copy, obsId, settings, { reason: 'preview', ...opts });
+  const r = voidObservation(structuredClone(p), obsId, settings, { reason: 'preview', ...opts });
+  const titles = list => list.map(a => a.title);
   return {
     before: r.before, after: r.after, transitions: r.transitions,
-    resolved: r.resolved.map(a => a.title), reopened: r.reopened.map(a => a.title), added: r.added.map(a => a.title),
+    resolved: titles(r.resolved), reopened: titles(r.reopened), added: titles(r.added),
   };
+}
+
+/**
+ * The heartbeat's time rules (alerts.js refreshTimeAlerts; in labour only, as
+ * the app.js tick runs them) at `at`, inside the write that changed the case:
+ * a void that takes back a second stage closes the second-stage alert
+ * ('cleared') and can bring back a progress limit or the active first-stage
+ * limit in the same save, not at the next tick 30 s later.
+ */
+function timeRules(p, settings, at) {
+  return isLabouring(p) ? refreshTimeAlerts(p, settings, new Date(at)) : NONE;
 }
 
 // The admission values the case also keeps on p.admission (summary card,
@@ -330,23 +388,31 @@ function mirrorAdmission(p, type, v) {
  * Correct an entry: void it, then record the corrected values in its place.
  * The other entries are judged again once, for the net stage change: judged
  * after each half, a correction that leaves the stage where it was would
- * close their alerts and then open new, unacknowledged ones.
+ * close their alerts and then open new, unacknowledged ones. The time rules
+ * run once at its end, in the same save. opts: by, reason, time (the
+ * corrected observation time, default the old one), at (when the correction
+ * is made, default now).
  */
-export function correctObservation(p, obsId, newValues, settings, { by = null, reason = 'Corrected entry', time } = {}) {
+export function correctObservation(p, obsId, newValues, settings, { by = null, reason = 'Corrected entry', time, at } = {}) {
   const old = (p.obs || []).find(x => x.id === obsId);
   if (!old) throw new Error('Entry not found');
+  const when = at || nowISO();
   const before = stageSnapshot(p);
-  const voided = voidEntry(p, obsId, settings, { by, reason }, false);
+  const voided = voidEntry(p, obsId, settings, { by, reason, at: when }, false);
   const applied = recordRound(p, time || old.time, { [old.type]: newValues }, settings,
-    { by, source: old.source || 'entry', replaces: obsId }, false);
+    { by, source: old.source || 'entry', replaces: obsId, enteredAt: when }, false);
   const fresh = applied.obs[0];
   if (fresh && old.source === 'admission') mirrorAdmission(p, old.type, fresh.v);
-  const re = restage(p, settings, before, { at: nowISO(), by, skip: applied.obs });
+  // the exams after the earlier of the two times read the changed exam
+  const from = earliest([old, fresh].filter(readsProgress).map(o => o.time));
+  const re = restage(p, settings, before, { at: when, by, skip: applied.obs, from });
   const cleared = reconcileAlerts(p, settings);
+  const tick = timeRules(p, settings, when);
   // the net stage change of the whole correction: the void half alone would
   // report a reversion, the re-entry half alone nothing
   return {
-    voided, ...applied, added: [...applied.added, ...re.added], resolved: [...applied.resolved, ...re.resolved, ...cleared],
+    voided, ...applied, added: [...applied.added, ...re.added, ...tick.added],
+    resolved: [...applied.resolved, ...re.resolved, ...cleared, ...tick.resolved],
     transitions: transitions(before, stageSnapshot(p)),
   };
 }
