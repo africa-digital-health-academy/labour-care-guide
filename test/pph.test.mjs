@@ -256,6 +256,36 @@ test('M6 review: voiding an unrelated entry keeps a PPH whose trigger was met, t
   assert.deepEqual([pph.resolved, pph.resolvedHow], [true, 'void']);
 });
 
+// ---------- M6 review pass 2: the birth record judges the trigger from the birth on ----
+// A birth recorded late was judged at the birth time alone: the mother's
+// entries already made after the birth never completed the trigger with it.
+
+/** Born at iso(2) in a second stage; pulses [minutes after the birth, bpm] recorded first, the birth saved 40 min after it. */
+function birthRecordedLate(pulses, delivery = {}) {
+  const p = mkPatient({ status: 'second', secondStageStart: iso(3) });
+  for (const [m, pulse] of pulses) applyObservations(p, after(m), { pulse: { pulse } }, LCG, { by: 'TE', enteredAt: after(m) });
+  const birth = { time: iso(2), outcome: 'live', placentaComplete: 'Y', eblMl: 350, ppVitals: { pulse: 90 }, ...delivery };
+  return { p, added: applyBirth(p, birth, {}, LCG, { by: 'TE', enteredAt: after(40) }).added };
+}
+
+test('M6 review pass 2: a birth recorded late meets the PPH trigger with a pulse taken after the birth, stamped when it was met', () => {
+  // born 14:00; pulse 115 through the labour wizard at 14:20 (the birth not yet
+  // on the tablet); the birth record saved at 14:40: 350 mL, postpartum pulse 90
+  const { p, added } = birthRecordedLate([[20, 115]]);
+  assert.deepEqual(p.obs[0].flags, [], 'pulse 115 in labour: no alert of its own');
+  const pph = added.find(a => a.code === 'pph');
+  assert.ok(pph, 'the 350 mL and the pulse of 115 after the birth meet the trigger');
+  assert.match(pph.title, /^PPH: 350 mL with pulse 115$/);
+  assert.deepEqual([pph.time, pph.raisedAt, pph.source, pph.severity], [after(20), after(40), 'birth', 'danger'],
+    'stamped when the trigger was met, raised when the birth record revealed it');
+});
+
+test('M6 review pass 2: a normal birth raises nothing extra when the birth record is judged from the birth on', () => {
+  assert.deepEqual(birthRecordedLate([[-10, 115], [20, 88]]).added, [], 'a pulse of 115 in labour, before the birth, is no PPH sign');
+  assert.deepEqual(birthRecordedLate([[20, 115]], { eblMl: 250 }).added, [], '250 mL is below the 300 mL of the trigger');
+  assert.deepEqual(birthRecordedLate([]).added, [], '350 mL with a pulse of 90 at the birth');
+});
+
 test('the trigger is only checked in the 24 h after birth', () => {
   const p = mkPatient({ status: 'delivered', delivery: { time: iso(30), outcome: 'live', ppVitals: {} } });
   const r = applyObservations(p, iso(1), { bloodloss: { ml: 800 } }, LCG);

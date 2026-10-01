@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateObs, evaluateTime, FLAG, haemodynamicSigns, pphTrigger, urineGrade } from '../js/alerts.js';
+import {
+  evaluateObs, evaluateTime, FLAG, haemodynamicSigns, pphTrigger, urineGrade, fieldsAwaitingEvidence,
+} from '../js/alerts.js';
 import { LIMITS, CLOSE_FHR_CODES } from '../js/protocol.js';
 import { applyObservations, correctObservation } from '../js/record.js';
 import { NOW, iso, mkPatient } from './helpers.mjs';
@@ -187,6 +189,24 @@ test('M6 review: a defaulted companion Y never clears "no companion"; a touched 
   assert.equal(a.resolved, false);
   applyObservations(p, iso(1), { supportive: { companion: 'Y' } }, settings, { by: 'TE' });
   assert.deepEqual([a.resolved, a.resolvedHow], [true, 'evidence']);
+});
+
+test('M6 review pass 2: fieldsAwaitingEvidence names, by entry type, the fields the open alerts wait on for evidence', () => {
+  const p = mkPatient();
+  assert.deepEqual(fieldsAwaitingEvidence(p), {}, 'no open alert');
+  applyObservations(p, iso(3), {
+    baby: { fhr: 140, decel: 'late', liquor: 'M3' }, exam: { dilatation: 6, moulding: 3 }, supportive: { companion: 'N' },
+  }, settings, { by: 'TE' });
+  assert.deepEqual(fieldsAwaitingEvidence(p), { baby: ['decel'], exam: ['moulding'], supportive: ['companion'] },
+    'thick meconium waits on nothing: no evidence clears it before the birth');
+  applyObservations(p, iso(2), { supportive: { companion: 'Y' } }, settings, { by: 'TE' });
+  assert.deepEqual(fieldsAwaitingEvidence(p), { baby: ['decel'], exam: ['moulding'] }, 'answered: a closed alert waits on nothing');
+  // one rule over two entry types, one over two fields (v1 codes); a closed alert and an unknown code wait on nothing
+  const q = mkPatient({
+    alerts: [{ code: 'liquor_mec', resolved: false }, { code: 'moulding_caput', resolved: false },
+      { code: 'decel', resolved: true }, { code: 'pph', resolved: false }, { code: 'toString', resolved: false }],
+  });
+  assert.deepEqual(fieldsAwaitingEvidence(q), { baby: ['liquor'], exam: ['liquor', 'moulding', 'caput'] });
 });
 
 // ---------------------------------------- M6 review: urine notations ----

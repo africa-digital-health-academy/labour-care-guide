@@ -12,7 +12,9 @@ import assert from 'node:assert/strict';
 import {
   WIZARD_TYPES, wizardTypeFor, computeDefaulted, wizardSteps, prefillValues, currentCode, timeChoices,
   ackRepeat, ackPreselect, acknowledgeAlerts, ackRepeatText, ackItemTag, alertsToAcknowledge,
+  sessionSteps, stepProblem,
 } from '../js/wizard.js';
+import { fieldsAwaitingEvidence } from '../js/alerts.js';
 import { PROTOCOLS, dueList } from '../js/protocol.js';
 import { applyObservations, applyBirth } from '../js/record.js';
 import { t, setLang } from '../js/i18n.js';
@@ -368,4 +370,35 @@ test('the acknowledgement dialog never asks about a silent note or an alert clos
   const r = applyObservations(p, iso(3), { baby: { fhr: 170 }, vitals: { sys: 150, dia: 95 } }, LCG, { by: 'TE' });
   assert.deepEqual(alertsToAcknowledge(p.alerts).map(a => a.code), ['htn']);
   assert.deepEqual(alertsToAcknowledge(r.added).map(a => a.code), ['htn']);
+});
+
+// ------------- M6 review pass 2: no preselection while an alert waits on the answer ----
+// A default is never evidence (alerts.js readsAll): a preselected "none", 0 or
+// Y tapped through with Next left its alert open until the birth. While an
+// open alert waits on a field (alerts.js fieldsAwaitingEvidence), a new
+// entry's step for it preselects nothing and Next asks for an answer; Skip
+// stays (not assessed: the alert stays open). Every other default stays.
+
+test('M6 review pass 2: an open alert on a defaulted field - no preselection, an answer before Next; without it the default stays', () => {
+  const p = mkPatient();
+  const decelOf = q => sessionSteps('baby', fieldsAwaitingEvidence(q)).find(s => s.key === 'decel');
+  const plain = decelOf(p);
+  assert.deepEqual([plain.dflt, plain.awaited, stepProblem(plain, { fhr: 140, decel: 'none' })], ['none', undefined, null],
+    'no open alert: "none" preselected as before, and Next passes');
+  applyObservations(p, iso(2), { baby: { fhr: 165, decel: 'late' }, supportive: { companion: 'N' } }, LCG, { by: 'TE' });
+  const decel = decelOf(p);
+  assert.deepEqual([decel.dflt, decel.awaited, decel.required], [undefined, true, undefined], 'nothing preselected; Skip still offered');
+  assert.equal(stepProblem(decel, { fhr: 140 }), t('wz.answer_awaited', { button: t('skip') }), 'Next with no answer');
+  assert.equal(stepProblem(decel, { fhr: 140, decel: 'none' }), null, '"none" tapped on purpose');
+  assert.deepEqual(sessionSteps('supportive', fieldsAwaitingEvidence(p)).map(s => s.dflt), [undefined, 'Y', 'Y', 'upright'],
+    'only the companion answer is awaited');
+  assert.deepEqual(sessionSteps('exam', fieldsAwaitingEvidence(p)), wizardSteps('exam'), 'nothing awaited: the steps as before');
+  assert.equal(stepProblem(step('baby', 'fhr'), {}), t('wz.required'), 'a required step keeps its message');
+  try {
+    setLang('am');
+    assert.equal(stepProblem(decel, {}), t('wz.answer_awaited', { button: t('skip') }));
+    assert.ok(stepProblem(decel, {}).includes(t('skip')), 'names the Skip button in the screen language');
+  } finally {
+    setLang('en');
+  }
 });

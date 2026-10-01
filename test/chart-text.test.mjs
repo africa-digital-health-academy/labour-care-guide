@@ -87,3 +87,19 @@ test('urineText writes one notation whatever was stored, and never reads an ungr
   assert.equal(urineText('trace'), 'tr');
   assert.equal(urineText('xyz'), '?');
 });
+
+test('Ethiopian partograph: an ungradable urine value is written P? / A?, as on the LCG chart - never dropped, never under a tick', () => {
+  const p = mkPatient();
+  // a v1 entry kept "urine passed" (urineVoided) beside its dipstick reading
+  p.obs.push({ id: 'u1', type: 'vitals', time: iso(4), v: { sys: 120, dia: 80, protein: 'pos', acetone: 'neg', urineVoided: true } });
+  p.obs.push({ id: 'u2', type: 'vitals', time: iso(2), v: { sys: 118, dia: 78, acetone: 'xyz' } });
+  p.obs.push({ id: 'u3', type: 'vitals', time: iso(1), v: { sys: 118, dia: 78, protein: 'neg', urineVoided: true } });
+  p.obs.push({ id: 'u4', type: 'vitals', time: iso(0.5), v: { sys: 118, dia: 78, protein: 'P++', acetone: 'A 1+' } });
+  const svg = chartSVG(p, ETH, NOW).svg;
+  // the urine row's value cells (centred; the row label at the same height is not)
+  const urineRow = [...svg.matchAll(/<text [^>]*y="761"[^>]*text-anchor="middle"[^>]*>([^<]*)<\/text>/g)].map(m => m[1]);
+  assert.deepEqual(urineRow, ['P?', 'A?', '✓', 'P++ A+'], 'not assessed is shown as such; a negative with urine passed keeps its tick');
+  assert.equal((svg.match(/<ellipse class="flag-circle/g) || []).length, 1, 'only P++ is circled: ? is never an alert value');
+  const lcg = chartSVG(p, LCG, NOW).svg;
+  assert.ok(lcg.includes('>P?<') && lcg.includes('>A?<'), 'the LCG chart writes the same');
+});

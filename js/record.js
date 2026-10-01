@@ -504,16 +504,20 @@ function mirrorAdmission(p, type, v) {
  * that end (closeAfterLabour). A value the correction leaves as it was keeps
  * its defaulted mark (the wizard prefills the old values): a step default
  * nobody touched never becomes evidence by correcting another value of the
- * entry (alerts.js readsAll). opts: by, reason, time (the corrected
+ * entry (alerts.js readsAll). A default the midwife touched while correcting
+ * (opts.touched: the keys she answered) is her answer and loses the mark; a
+ * changed value never has it. opts: by, reason, time (the corrected
  * observation time, default the old one), at (when the correction is made,
- * default now).
+ * default now), touched (array or Set of keys, default none).
  */
-export function correctObservation(p, obsId, newValues, settings, { by = null, reason = 'Corrected entry', time, at } = {}) {
+export function correctObservation(p, obsId, newValues, settings, { by = null, reason = 'Corrected entry', time, at, touched } = {}) {
   const old = (p.obs || []).find(x => x.id === obsId);
   if (!old) throw new Error('Entry not found');
   const when = at || nowISO();
   const before = stageSnapshot(p);
-  const kept = (old.defaulted || []).filter(k => newValues && old.v && newValues[k] !== undefined && newValues[k] === old.v[k]);
+  const answered = new Set(touched || []);
+  const kept = (old.defaulted || []).filter(k => !answered.has(k)
+    && newValues && old.v && newValues[k] !== undefined && newValues[k] === old.v[k]);
   const voided = voidEntry(p, obsId, settings, { by, reason, at: when }, false);
   const applied = recordRound(p, time || old.time, { [old.type]: newValues }, settings,
     { by, source: old.source || 'entry', replaces: obsId, enteredAt: when, defaulted: { [old.type]: kept } }, false);

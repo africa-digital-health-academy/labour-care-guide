@@ -1125,3 +1125,25 @@ test('M6: the referral note states its plan in words, as the summary and the cha
   assert.equal(planText(note), 'Referred - see the referral note', 'not "referral"');
   assert.deepEqual([noteAction(note), noteAction({ ...note, plan: 'referral' })], ['referral', 'referral'], 'a v1 referral note too');
 });
+
+// ---------- M6 review pass 2: a default re-tapped while correcting is her answer ----
+
+test('M6 review pass 2: a correction drops the defaulted mark of a value touched while correcting; a changed value is never marked', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(3), { supportive: { companion: 'N', painRelief: 'Y', oralFluid: 'Y', posture: 'upright' } }, LCG, { by: 'TE' });
+  const alone = p.alerts.find(a => a.code === 'no_companion');
+  const all = ['companion', 'painRelief', 'oralFluid', 'posture'];
+  const tapped = applyObservations(p, iso(2), { supportive: { companion: 'Y', painRelief: 'Y', oralFluid: 'Y', posture: 'upright' } }, LCG,
+    { by: 'TE', defaulted: { supportive: all } }).obs[0];
+  assert.equal(alone.resolved, false, 'the defaults are no evidence');
+  // correcting the entry she re-taps Y for the companion and changes pain relief;
+  // the posture is changed with no touch reported, oral fluid left as it was
+  const fixed = correctObservation(p, tapped.id, { companion: 'Y', painRelief: 'N', oralFluid: 'Y', posture: 'lateral' }, LCG,
+    { by: 'TE', reason: 'wrong posture', at: iso(1.9), touched: ['companion', 'painRelief'] }).obs[0];
+  assert.deepEqual(fixed.defaulted, ['oralFluid'], 'only the value nobody touched or changed stays a default');
+  assert.deepEqual([alone.resolved, alone.resolvedHow, alone.resolvedByObs], [true, 'evidence', fixed.id], 'her Y is evidence');
+  // nothing touched: the unchanged defaults keep their mark, as before
+  const again = correctObservation(p, fixed.id, { companion: 'Y', painRelief: 'N', oralFluid: 'Y', posture: 'MO' }, LCG,
+    { by: 'TE', reason: 'posture code', at: iso(1.8) }).obs[0];
+  assert.deepEqual(again.defaulted, ['oralFluid']);
+});

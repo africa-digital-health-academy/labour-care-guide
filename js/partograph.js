@@ -236,6 +236,7 @@ export const PARTO_LEGEND = `X dilatation (cm) · O descent (fifths above brim) 
     I/C/M/B amniotic fluid · E/V/L early-variable-late decelerations ·
     orange ALERT and red ACTION lines per Ethiopian modified WHO partograph ·
     supportive care: ✓ ok, C no companion, PR no pain relief, F no fluids, SP supine; P pushing began;
+    urine P protein, A acetone (tr trace, ? not gradable);
     circled values meet an alert criterion: solid red until the alert is acknowledged, dashed grey = acknowledged;
     an FHR beyond the scale sits on its edge with an arrow and its value`;
 
@@ -440,7 +441,15 @@ function partoMother(c) {
       s += `<path d="M${cx - 4},${c.bpY(o.v.dia) - 4} L${cx},${c.bpY(o.v.dia)} L${cx + 4},${c.bpY(o.v.dia) - 4}" fill="none" stroke="${col}" stroke-width="1.5"/>`;
     }
     if (o.v.temp != null) s += partoCode(c, 'temp', o, 'temp', Number(o.v.temp).toFixed(1), FLAG.temp(o.v.temp));
-    const graded = key => (urineGrade(o.v[key]) > 0 ? (key === 'protein' ? 'P' : 'A') + urineText(o.v[key]) : '');
+    // a positive grade, or a value that cannot be graded, written as the LCG
+    // chart writes it (urineText: 'P++', 'A?'): not assessed is shown, never
+    // dropped under a tick; a negative is not written (urine passed: a tick)
+    const graded = key => {
+      const v = o.v[key];
+      if (v == null || v === '') return '';
+      const g = urineGrade(v);
+      return g == null || g > 0 ? (key === 'protein' ? 'P' : 'A') + urineText(v) : '';
+    };
     const ur = [graded('protein'), graded('acetone')].filter(Boolean).join(' ');
     if (ur || o.v.urineVoided) s += partoCode(c, 'urine', o, ['protein', 'acetone'], ur || '✓', FLAG.urine(o.v.protein) || FLAG.urine(o.v.acetone));
   }

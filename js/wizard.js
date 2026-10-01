@@ -26,14 +26,18 @@
 // every alert there is such a repeat and all share the same earlier action;
 // otherwise nothing is selected and the midwife picks (never a default).
 // M6: an alert closed in the save that raised it, after labour had ended
-// (needsAck: false), was never shown open and is never asked about.
+// (needsAck: false), was never shown open and is never asked about. A step
+// default is never evidence, so while an open alert waits on a defaulted
+// answer (alerts.js fieldsAwaitingEvidence) a new entry preselects nothing
+// for it and Next asks for an answer (sessionSteps); a correction tells
+// record.js which answers the midwife touched while correcting.
 
 import {
   h, clear, openModal, numpad, stepper, segmented, toast, beep, alertBanner, byField, fmtTime, minutesAgoISO,
 } from './ui.js';
 import { t } from './i18n.js';
 import { getProtocol, lastObs, birthTime, toMs } from './protocol.js';
-import { FLAG, bloodLossTotal } from './alerts.js';
+import { FLAG, bloodLossTotal, fieldsAwaitingEvidence } from './alerts.js';
 import { applyObservations, correctObservation, normalizeValues } from './record.js';
 import { S, savePatient, uid, getBy, setBy } from './store.js';
 
@@ -148,8 +152,9 @@ const Q = {
 // options (segmented), numpad or stepper (hint: previous value shown greyed,
 // never committed untouched). required, or requiredIf(values of its type);
 // every other step can be skipped. dflt pre-selects an answer: an untouched
-// default is reported to the audit as defaulted. note(value, session) adds a
-// line under the control.
+// default is reported to the audit as defaulted (and none is pre-selected
+// while an open alert waits on the answer - sessionSteps). note(value,
+// session) adds a line under the control.
 
 const STEPS = {
   baby: [
@@ -264,6 +269,25 @@ export function wizardSteps(type) {
   return own(STEPS, type) ? STEPS[type].map(inLangStep) : [];
 }
 
+/**
+ * The steps of a type as a new entry's session builds them. A step with a
+ * default whose field an open alert waits on (awaiting: alerts.js
+ * fieldsAwaitingEvidence, {type: [fields]}) preselects nothing: a default is
+ * never evidence, so "none", 0 or Y tapped through with Next would leave that
+ * alert open with no answer given. Such a step is marked `awaited`: Next asks
+ * for an answer (stepProblem); Skip stays, and leaves the alert open. Every
+ * other step is as wizardSteps gives it. Pure.
+ */
+export function sessionSteps(type, awaiting = {}) {
+  const fields = awaiting && own(awaiting, type) ? awaiting[type] : [];
+  return wizardSteps(type).map(s => {
+    if (s.dflt === undefined || !fields.includes(s.key)) return s;
+    const out = { ...s, awaited: true };
+    delete out.dflt;
+    return out;
+  });
+}
+
 // due items that are recorded with another type's steps
 const DUE_TO_WIZARD = { ppBP: 'ppMother', ppVoid: 'ppMother' };
 
@@ -298,8 +322,19 @@ function lastExamValue(patient, key) {
 
 const isRequired = (step, typeValues) => !!step.required || !!(step.requiredIf && step.requiredIf(typeValues));
 
-const stepDefaults = type => Object.fromEntries(
-  wizardSteps(type).filter(s => s.dflt !== undefined).map(s => [s.key, s.dflt]));
+/**
+ * Why Next cannot leave a step yet, or null: a required answer is blank, or
+ * an awaited one (sessionSteps) - the midwife chooses what she found, or
+ * taps Skip. typeValues: the answers of the step's type so far. Pure.
+ */
+export function stepProblem(step, typeValues) {
+  const tv = typeValues || {};
+  if (!blank(tv[step.key])) return null;
+  if (isRequired(step, tv)) return t('wz.required');
+  return step.awaited ? t('wz.answer_awaited', { button: t('skip') }) : null;
+}
+
+const stepDefaults = steps => Object.fromEntries(steps.filter(s => s.dflt !== undefined).map(s => [s.key, s.dflt]));
 
 /** The committed values without the blanks an untouched numpad leaves; empty types dropped. */
 function cleanValues(values) {
@@ -407,9 +442,13 @@ function createSession(patient, types, onComplete, opts) {
   const list = correcting ? [old.type]
     : [...new Set((types || []).map(wizardTypeFor))].filter(type => WIZARD_TYPES.includes(type));
   if (!list.length) return null;
+  // a correction shows the entry's own values and preselects nothing; a new
+  // entry preselects no answer an open alert waits on (sessionSteps)
+  const awaiting = correcting ? {} : fieldsAwaitingEvidence(patient);
+  const steps = Object.fromEntries(list.map(type => [type, sessionSteps(type, awaiting)]));
   const w = {
     patient, onComplete, opts, correcting, list,
-    plan: list.flatMap(type => wizardSteps(type).map(step => ({ type, step }))),
+    plan: list.flatMap(type => steps[type].map(step => ({ type, step }))),
     values: {}, touched: {}, defaults: {},
     idx: 0, offsetMin: 0, saving: false, error: null,
     by: correcting ? String(opts.by || '') : getBy(),
@@ -418,7 +457,7 @@ function createSession(patient, types, onComplete, opts) {
   for (const type of list) {
     w.values[type] = correcting ? prefillValues(type, opts.prefill || old.v) : {};
     w.touched[type] = new Set();
-    w.defaults[type] = stepDefaults(type);
+    w.defaults[type] = stepDefaults(steps[type]);
   }
   return w;
 }
@@ -510,7 +549,8 @@ function stepNav(w, step, tv, err) {
     if (w.idx > 0) { w.idx--; showStep(w); } else if (w.correcting) w.close(); else showTimeScreen(w);
   };
   const next = () => {
-    if (required && blank(tv[step.key])) { err.textContent = t('wz.required'); return; }
+    const problem = stepProblem(step, tv);
+    if (problem) { err.textContent = problem; return; }
     advance();
   };
   return h('div', { class: 'wizard-nav' },
@@ -561,8 +601,10 @@ async function saveEntry(w, clean) {
 
 async function saveCorrection(w, clean) {
   const { patient, opts } = w;
-  const r = await commit(patient, () => correctObservation(patient, opts.replaces, clean[w.list[0]], S.settings,
-    { by: w.by, reason: opts.reason, time: w.time }));
+  const type = w.list[0];
+  // the answers she touched while correcting: a default she re-tapped is her answer, no longer a default
+  const r = await commit(patient, () => correctObservation(patient, opts.replaces, clean[type], S.settings,
+    { by: w.by, reason: opts.reason, time: w.time, touched: [...w.touched[type]] }));
   setBy(w.by);
   // r.transitions is the net stage change of the void and the re-entry together
   return { added: r.added, transitions: r.transitions, message: t('wz.corrected') };

@@ -673,7 +673,7 @@ const LCG_LEGEND = 'X cervical dilatation (cm); O descent (fifths palpable above
   + 'Latent / admission columns are labelled with the time each spans; +n = n more entries in that cell than the one shown. '
   + 'Y yes, N no, D declined; SP supine, MO mobile; decelerations N none, E early, L late, V variable, Pr prolonged; '
   + 'fluid I intact, C clear, M+ to M+++ meconium, B blood; position A anterior, P posterior, T transverse; '
-  + 'urine P protein, A acetone (- negative, tr trace); ? = an entry without initials. '
+  + 'urine P protein, A acetone (- negative, tr trace, ? not gradable); ? in the initials row = an entry without initials. '
   + 'Each sheet covers 12 hours of the active first stage; the second stage is on the sheet where it began.';
 
 function lcgChart(p, settings, now, opts) {

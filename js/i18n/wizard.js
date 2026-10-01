@@ -110,6 +110,8 @@ export const en = {
   'wz.initials_required': 'Your initials are required.',
   'wz.correcting': 'Correcting the entry at {time}',
   'wz.required': 'This value is required.',
+  // {button} is the step's Skip button; the step preselects nothing while an open alert waits on its answer
+  'wz.answer_awaited': 'An open alert waits on this answer: choose what you found, or tap "{button}" if it was not assessed.',
   'wz.save_correction': 'Save correction',
   'wz.nothing_to_correct': 'Nothing to record - enter a value, or void the entry instead.',
   'wz.nothing_recorded': 'Nothing recorded - every question was skipped',
@@ -264,6 +266,7 @@ export const am = {
   'wz.initials_required': 'የስምዎ መነሻ ፊደላት (initials) ያስፈልጋሉ።',
   'wz.correcting': 'የ{time} መዝገብ እየታረመ ነው',
   'wz.required': 'ይህ መሞላት አለበት።',
+  'wz.answer_awaited': 'በዚህ መልስ ላይ ክፍት ማስጠንቀቂያ አለ፦ ያገኙትን ይምረጡ፤ ካልተመረመረ "{button}" የሚለውን ይጫኑ።',
   'wz.save_correction': 'እርማቱን አስቀምጥ',
   'wz.nothing_to_correct': 'የሚመዘገብ ነገር የለም - እሴት ያስገቡ፣ ወይም በምትኩ መዝገቡን ይሰርዙ (void)።',
   'wz.nothing_recorded': 'ምንም አልተመዘገበም - ሁሉም ጥያቄዎች ተዘልለዋል',

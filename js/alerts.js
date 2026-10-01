@@ -331,27 +331,33 @@ function pphTimes(p, from) {
 }
 
 /**
- * The PPH check of one of the mother's entries. The 2025 trigger is
- * cumulative (300 mL with an abnormal sign, or 500 mL), so a reading entered
- * late completes it with the entries made after its own time: a drape reading
- * back-timed before a pulse of 112 meets it at that pulse. The trigger is
- * judged at the entry's own time and as the case stood at each of the
- * mother's later entries. One draft at most, so nothing is raised twice: it
- * carries the figures of the latest time the trigger is met (an open alert
- * never falls back to an older, lower total, which would also lower the bar
- * a closed episode sets) and, as `at`, the first - the alert is stamped with
- * the time the trigger was met (S12).
+ * The PPH trigger judged from `from` on: at `from` itself and as the case
+ * stood at each of the mother's later entries (pphTimes). One draft at most,
+ * so nothing is raised twice: it carries the figures of the latest time the
+ * trigger is met (an open alert never falls back to an older, lower total,
+ * which would also lower the bar a closed episode sets) and, as `at`, the
+ * first - the alert is stamped with the time the trigger was met (S12).
  */
-function pphCheck(p, o) {
-  if (!inPPHWindow(p, o)) return [];
+function pphFrom(p, from) {
   let first = null, last = null;
-  for (const t of pphTimes(p, o.time)) {
+  for (const t of pphTimes(p, from)) {
     const [d] = pphDrafts(p, t);
     if (!d) continue;
     first = first || t;
     last = d;
   }
   return last ? [{ ...last, at: first }] : [];
+}
+
+/**
+ * The PPH check of one of the mother's entries. The 2025 trigger is
+ * cumulative (300 mL with an abnormal sign, or 500 mL), so a reading entered
+ * late completes it with the entries made after its own time: a drape reading
+ * back-timed before a pulse of 112 meets it at that pulse. Judged from the
+ * entry's own time on (pphFrom).
+ */
+function pphCheck(p, o) {
+  return inPPHWindow(p, o) ? pphFrom(p, o.time) : [];
 }
 
 /** The trigger as the case stands, judged cumulatively: at the last time since the birth it is met (pphTimes), or null. */
@@ -672,7 +678,14 @@ export function admissionRiskAlerts(p, settings, labelOf = code => code) {
   ])];
 }
 
-/** Alerts raised by the birth record (moved out of the delivery view - S13). */
+/**
+ * Alerts raised by the birth record (moved out of the delivery view - S13).
+ * Its PPH trigger is judged from the birth on, as an entry's is (pphFrom): a
+ * birth recorded late meets it with the mother's entries already made after
+ * the birth - its estimate with a pulse taken after the birth but entered
+ * before the birth was on the tablet - and the alert is stamped when the
+ * trigger was met.
+ */
 export function birthAlerts(p) {
   const d = p.delivery;
   if (!d) return [];
@@ -690,7 +703,7 @@ export function birthAlerts(p) {
     out.push(A('stillbirth', 'warn', 'Stillbirth — respectful supportive care',
       ['Provide compassionate counselling and privacy for the family', 'Complete perinatal death notification per national surveillance', 'Review the labour record for learning (audit), not blame']));
   }
-  return out.concat(pphDrafts(p, d.time));
+  return out.concat(pphFrom(p, d.time));
 }
 
 // ------------------------------------------------------------------------
@@ -715,8 +728,8 @@ function asksAgain(open, d, source, obsId) {
  * acknowledgement, and so does a new entry once it has been acknowledged
  * (asksAgain: stamped reAlertedAt). Otherwise a new alert opens with the next
  * episode number. opts.time is the observation time the alert is stamped
- * with (S12); a draft met at another time than its entry's (a PPH trigger
- * completed by later entries, pphCheck) carries that time as d.at.
+ * with (S12); a draft met at another time than its entry's or the birth's (a
+ * PPH trigger completed by later entries, pphFrom) carries that time as d.at.
  */
 export function addAlerts(patient, drafts, source = 'obs', opts = {}) {
   const raisedAt = opts.raisedAt || nowISO();
@@ -862,6 +875,23 @@ function flagsOf(p, o, settings) {
 function readsAll(rule, o) {
   const untouched = o.defaulted || [];
   return !!o.v && rule.fields.every(f => rule.reads(o.v[f]) && !untouched.includes(f));
+}
+
+/**
+ * The fields the open alerts wait on for evidence (RESOLVE_ON), by entry
+ * type: {type: [fields]}, e.g. {baby: ['decel']} while late decelerations
+ * are open. A step default is never evidence (readsAll), so the wizard
+ * preselects no answer for these fields (wizard.js sessionSteps): the midwife
+ * answers them on purpose. Pure.
+ */
+export function fieldsAwaitingEvidence(p) {
+  const out = {};
+  for (const a of (p && p.alerts) || []) {
+    if (!a || a.resolved || !Object.prototype.hasOwnProperty.call(RESOLVE_ON, a.code)) continue;
+    const rule = RESOLVE_ON[a.code];
+    for (const type of rule.types) out[type] = [...new Set([...(out[type] || []), ...rule.fields])];
+  }
+  return out;
 }
 
 /**
