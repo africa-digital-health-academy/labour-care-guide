@@ -10,7 +10,7 @@ import { S, saveSettings } from '../store.js';
 import { PROTOCOLS } from '../protocol.js';
 import { seedDemoPatient } from '../demo.js';
 
-const REPO_URL = 'https://github.com/DrTemesgen/labour-care-guide';
+const REPO_URL = 'https://github.com/africa-digital-health-academy/labour-care-guide';
 // N5: where to learn more about the LCG. Links only: no WHO text is copied.
 const IRP_URL = 'https://www.who.int/publications/i/item/9789240109346'; // WHO, 2025, ISBN 978-92-4-010934-6
 const LRP_URL = 'https://jhpiego.org/areas-of-expertise/helping-mothers-survive/'; // holds the LCG Learning Resource Package
