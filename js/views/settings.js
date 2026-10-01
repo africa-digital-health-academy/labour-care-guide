@@ -1,6 +1,7 @@
 // views/settings.js - facility configuration, protocol selection, language,
 // update check, sound test, and the about/disclaimer section. Screen text goes
-// through t() (keys 'rp.*' in js/i18n/reports.js).
+// through t() (keys 'rp.*' in js/i18n/reports.js); the About card also carries
+// the public-preview sentence (2.0.2, js/preview.js), above the disclaimer.
 
 import '../version.js';
 import { h, field, segmented, toast, beep } from '../ui.js';
@@ -9,6 +10,7 @@ import { en as rpEn } from '../i18n/reports.js';
 import { S, saveSettings } from '../store.js';
 import { PROTOCOLS } from '../protocol.js';
 import { seedDemoPatient } from '../demo.js';
+import { previewSentence } from '../preview.js';
 
 const REPO_URL = 'https://github.com/africa-digital-health-academy/labour-care-guide';
 // N5: where to learn more about the LCG. Links only: no WHO text is copied.
@@ -125,6 +127,7 @@ export function renderSettings() {
       h('p', null, t('rp.version', { v: self.LCG_VERSION })),
       h('p', null, t('rp.about_text')),
       h('p', { class: 'muted' }, t('rp.not_who')),
+      h('p', { class: 'muted', role: 'note' }, previewSentence()),
       h('p', { class: 'muted', style: 'border-left:4px solid var(--c-warn);padding-left:10px' }, t('rp.disclaimer')),
       h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin:8px 0' },
         h('button', { class: 'btn secondary', onclick: checkForUpdates }, t('rp.check_updates')),

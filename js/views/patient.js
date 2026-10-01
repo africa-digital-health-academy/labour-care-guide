@@ -1,5 +1,6 @@
 // views/patient.js - one case: header (stage, clocks, due chips, actions),
-// alert strip, and the chart, entries, alerts, summary, referral and delivery
+// alert strip, the public-preview line (js/preview.js, outside the live
+// parts), and the chart, entries, alerts, summary, referral and delivery
 // tabs, plus the emergency card.
 //
 // Live parts (S3): the header, the alert strip and the chart body carry
@@ -50,6 +51,7 @@ import {
 import { renderReferralTab } from './referral.js';
 import { renderDeliveryTab } from './delivery.js';
 import { downloadFHIR } from '../fhir.js';
+import { previewNotice, previewNoticeMode, previewDismissed } from '../preview.js';
 
 // Labour observations offered by "Record now"; oxytocin joins while it runs.
 const LABOUR_TYPES = ['baby', 'contractions', 'pulse', 'vitals', 'exam', 'supportive'];
@@ -66,7 +68,9 @@ export function renderPatient(id, tab = 'chart') {
   if (!p) return h('div', { class: 'page' }, h('p', null, t('pt.not_found')));
   const current = TABS.includes(tab) ? tab : 'chart';
   const now = new Date();
-  const page = h('div', { class: 'page' }, patientHeader(p, now), alertStrip(p));
+  // the public-preview line (2.0.2) goes below the alert strip, so alerts keep their place
+  const page = h('div', { class: 'page' }, patientHeader(p, now), alertStrip(p),
+    previewNotice(previewNoticeMode({ cases: S.patients.length, dismissed: previewDismissed() })));
 
   const labels = {
     chart: t('chart'), entries: t('entries'),

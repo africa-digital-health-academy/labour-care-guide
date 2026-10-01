@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.2 - 1 October 2026
+
+- A public-preview notice. Outreach e-mails and posts link straight to the
+  live preview, and nothing on screen said it was one. The screens now say:
+  "Public preview for demonstration, training and review - not for facility
+  use until an Ethiopian obstetric and midwifery panel has reviewed it. Not a
+  WHO product.", with a "Learn more" link (new tab) to the repository README.
+  On a device with no case it is the first card on the ward board; once a
+  case exists it is one muted line at the top of the board and below the
+  alert strip on the case view, with a Dismiss button that hides it for the
+  browser session (it returns on the next open, by design). The About card
+  in Settings carries the same sentence above the disclaimer. The notice sits
+  in the page flow, never over a form or the alert strip, and wraps at
+  360 px. English with an Amharic draft; alert titles and advice stay in
+  English. Code in js/preview.js.
+- Tests: 541, up from 527.
+
 ## 2.0.1 - 1 October 2026
 
 - The repository moved to the Africa Digital Health Academy organisation

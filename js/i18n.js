@@ -89,6 +89,11 @@ const en = {
   // M6: messages from demo.js and db.js
   demo_loaded: 'Demo case loaded - open it from the ward board',
   db_blocked: 'Close this app in other open tabs to finish updating.',
+  // 2.0.2: the public-preview notice (js/preview.js) on the ward board, the
+  // case view and the About card
+  preview_note: 'Public preview for demonstration, training and review - not for facility use until an Ethiopian obstetric and midwifery panel has reviewed it. Not a WHO product.',
+  preview_more: 'Learn more',
+  preview_dismiss: 'Dismiss',
 };
 
 const am = {
@@ -166,6 +171,9 @@ const am = {
   ui_dur_hm: '{h} ሰዓት {m} ደቂቃ',
   demo_loaded: 'የማሳያ ፋይሉ ተጭኗል - ከማዋለጃ ክፍል ዝርዝር ይክፈቱት',
   db_blocked: 'ዝማኔውን ለመጨረስ ይህን መተግበሪያ በሌሎች ክፍት ትሮች ውስጥ ይዝጉ።',
+  preview_note: 'ለማሳያ፣ ለስልጠናና ለግምገማ የቀረበ ይፋዊ የሙከራ ስሪት - የኢትዮጵያ የጽንስና ማዋለድ እና የአዋላጅነት ባለሙያዎች ቡድን እስኪገመግመው ድረስ በጤና ተቋም ውስጥ ለአገልግሎት አይውልም። የWHO ምርት አይደለም።',
+  preview_more: 'ተጨማሪ ይወቁ',
+  preview_dismiss: 'ደብቅ',
 };
 
 // Per-area string fragments (M5), merged into the two dictionaries. Each area
