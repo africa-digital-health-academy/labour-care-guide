@@ -288,6 +288,10 @@ export function indicatorRows(ind) {
   rows.push(['BP measured on admission', ind.bpOnAdmission.n, ind.bpOnAdmission.d, pct(ind.bpOnAdmission), src]);
   rows.push(['Wanted and had a companion of choice', ind.companion.n, ind.companion.d, pct(ind.companion),
     `wish not recorded for ${ind.companion.unknown}`]);
+  const st = ind.companion.byStage;
+  rows.push(['Companion of choice in the first stage', st.first.n, st.first.d, pct(st.first), 'women who wanted a companion']);
+  rows.push(['Companion of choice in the second stage', st.second.n, st.second.d, pct(st.second),
+    `women with a documented second stage; ${st.second.withoutDocumentedSecond} who wanted one had none documented`]);
   rows.push(['Caesarean section rate', ind.caesarean.n, ind.caesarean.d, pct(ind.caesarean), src]);
   for (const g of Object.keys(ind.caesarean.robson).sort((a, b) => (parseInt(a, 10) || 99) - (parseInt(b, 10) || 99) || a.localeCompare(b))) {
     const r = ind.caesarean.robson[g];

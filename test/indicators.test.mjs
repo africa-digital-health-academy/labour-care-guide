@@ -179,6 +179,9 @@ test('indicator rows carry a header, the Robson breakdown and the stillbirth spl
   assert.deepEqual(rows[0], ['indicator', 'numerator', 'denominator', 'percent', 'note']);
   assert.ok(rows.some(r => r[0] === 'Caesarean rate, Robson group 3' && r[1] === 1 && r[2] === 1));
   assert.ok(rows.some(r => r[0] === 'Institutional stillbirths' && /intrapartum 1/.test(r[4])));
+  const second = rows.find(r => r[0] === 'Companion of choice in the second stage');
+  assert.ok(second && /documented second stage; \d+ who wanted one had none documented/.test(second[4]));
+  assert.ok(rows.some(r => r[0] === 'Companion of choice in the first stage'));
 });
 
 test('indicator export rows: the period and the facility in front of every row', () => {

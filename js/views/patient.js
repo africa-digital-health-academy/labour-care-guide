@@ -34,7 +34,7 @@ import {
 } from '../protocol.js';
 import { EMERGENCIES, addAlerts, resolveAlert } from '../alerts.js';
 import { previewVoid, voidObservation, recordEvent } from '../record.js';
-import { auditCase } from '../audit.js';
+import { auditCase, isAckNote } from '../audit.js';
 import { isDemo } from '../indicators.js';
 import {
   openRecordWizard, openMedicationModal, showAlertAckModal, WIZARD_TYPES, wizardTypeFor,
@@ -794,7 +794,8 @@ function summaryTab(p, now) {
         h('div', { style: 'border-bottom:1px solid var(--c-line);padding:8px 0' },
           h('p', { class: 'muted', style: 'margin:0;font-size:.8rem' }, fmtDT(n.time) + (n.by ? ' - ' + t('pt.by', { by: n.by }) : '')),
           n.text ? h('p', { style: 'margin:2px 0' }, n.text) : null,
-          n.plan ? h('p', { class: 'muted', style: 'margin:0' }, t('pt.plan', { plan: n.plan })) : null,
+          // an acknowledgement note stores its action as a code: show it in words
+          n.plan ? h('p', { class: 'muted', style: 'margin:0' }, t('pt.plan', { plan: (isAckNote(n) && ACTION()[n.plan]) || n.plan })) : null,
         )),
       noteForm(p),
     ),
