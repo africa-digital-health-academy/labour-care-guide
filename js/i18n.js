@@ -4,6 +4,11 @@
 // Ethiopian clinical/localization team before facility use. Afaan Oromo,
 // Tigrinya, Somali and Afar are planned (see docs/ROADMAP.md).
 
+import * as wz from './i18n/wizard.js';
+import * as pt from './i18n/patient.js';
+import * as fm from './i18n/forms.js';
+import * as rp from './i18n/reports.js';
+
 const en = {
   app_name: 'Labour Care Guide',
   dashboard: 'Labour ward',
@@ -119,8 +124,25 @@ const am = {
   alert_act: 'አሁኑኑ እርምጃ ውሰድ',
 };
 
+// Per-area string fragments (M5), merged into the two dictionaries. Each area
+// prefixes its keys (wz. wizard, pt. patient and ward board, fm. admission /
+// birth / referral forms, rp. reports and settings) so areas never collide.
+for (const frag of [wz, pt, fm, rp]) {
+  Object.assign(en, frag.en);
+  Object.assign(am, frag.am);
+}
+
 const dicts = { en, am };
 let lang = 'en';
+
+/** Every English key (the completeness test checks each t() call against these). */
+export const EN_KEYS = Object.freeze(Object.keys(en));
+
+/** Share of English keys with an Amharic draft, 0-1 (reported by the tests). */
+export function amharicCoverage() {
+  const keys = Object.keys(en);
+  return keys.length ? keys.filter(k => am[k]).length / keys.length : 1;
+}
 
 export function setLang(l) { lang = dicts[l] ? l : 'en'; }
 export function getLang() { return lang; }
