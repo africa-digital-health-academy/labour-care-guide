@@ -151,7 +151,7 @@ follow-ups, and the documentation for v2.
 - Documentation: DESIGN (render model, correction model, alert lifecycle,
   audit and indicators, release process), RESEARCH (implementation package,
   PPH guidelines 2025), ROADMAP (v2.1) and the README for the new name.
-- Clinical-safety review by a separate AI model, two passes, and two browser walks. Pass 1
+- Automated clinical-safety review, independent of the build, two passes, and two browser walks. Pass 1
   found no critical issue and four to fix before facility use, all fixed:
   progress alerts that depend on earlier exams were not re-judged; a
   back-timed entry was judged against the current stage; one preselected
@@ -187,7 +187,7 @@ reports show the WHO implementation indicators.
   LCG score, voided entries and total blood loss) that open cleanly in Excel.
 - A corrected birth can no longer be timed after a postpartum check already
   recorded; closing a case is rule-checked and tested.
-- Clinical-safety review by a separate AI model, two passes, and a browser walk of chart, print,
+- Automated clinical-safety review, independent of the build, two passes, and a browser walk of chart, print,
   continuation, the Ethiopian partograph and reports.
 - Tests: 344, up from 297.
 
@@ -228,7 +228,7 @@ The screens now feed the M2 engine and keep what the midwife types.
 - The ward board and the alert strip count only open alerts; closed alerts
   still awaiting acknowledgement are shown apart.
 - Phone width: every screen fits 360 px without sideways scrolling.
-- Clinical-safety review by a separate AI model, two passes. Pass 1 found no critical issue and
+- Automated clinical-safety review, independent of the build, two passes. Pass 1 found no critical issue and
   three to fix before facility use, all fixed: the birth record saved
   untouched "placenta complete", "perineum intact" and "no resuscitation" as
   facts; admission recorded an unexamined cephalic presentation; postpartum
@@ -296,7 +296,7 @@ yet (M3); the engine is wired into the existing ones.
   and a formula guard.
 - The chart is split into a pure chartSVG() that the tests can run; voided
   entries are never drawn.
-- Clinical-safety review by a separate AI model, pass 1, found and this milestone fixed: new
+- Automated clinical-safety review, independent of the build, pass 1, found and this milestone fixed: new
   cases were saved without a schema version, so a reload could mark a
   referred woman as departed and stop her monitoring (cases are now created
   in the current schema and referrals start as "not yet left"); voiding a
