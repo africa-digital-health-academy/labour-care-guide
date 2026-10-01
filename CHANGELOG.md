@@ -65,7 +65,7 @@ facility use before the clinical panel review.
   an open alert waits for an answer that would clear it, the wizard step
   starts with nothing selected, so a default can no longer leave it open
   unnoticed.
-- Clinical-safety review by a separate AI model (not a clinician) against the WHO form, manual and
+- Clinical-safety review, automated and independent of the build (not a clinician), against the WHO form, manual and
   implementation resource package, two passes: every alert value, recording
   interval and stage limit matches, and every deviation is stricter or
   added, never looser. Pass 1: safe to publish as a public preview after one
