@@ -1,5 +1,67 @@
 # Changelog
 
+## 2.0.0 (release candidate, not yet published) - milestone M6, 1 October 2026
+
+Verification, review and release preparation. The version is 2.0.0; the
+tag, the public repository and GitHub Pages wait for the owner's go. Not for
+facility use before the clinical panel review.
+
+- Service worker on a shared web origin: every GitHub Pages site of one
+  account shares one Cache Storage, and v2 deleted the offline copies of
+  Parthograph v1 and other apps there on activation. It now deletes only its
+  own old caches, and if another app's worker deletes v2's cache, the whole
+  shell is fetched again in one all-or-nothing step. An update check
+  fetches the worker and js/version.js past the HTTP cache, so a release is
+  seen at the next check.
+- Medication entries and the midwife's own notes can be voided from the
+  Entries tab, append-only with reason and initials; voiding an oxytocin
+  record recomputes whether it runs. Chart, print, referral note, audit and
+  FHIR were each tested against voided items.
+- A referred woman's departure closes her open labour findings. An alert
+  closed in the same save that raised it (an entry corrected after the birth
+  or her departure) never asks for acknowledgement and is drawn as handled.
+- A birth can no longer be timed before the last labour entry (in the same
+  minute it is stored at that entry's time), so the chart never loses the end
+  of labour.
+- While a thick-meconium, abnormal-FHR or deceleration alert is open, the FHR
+  is due every 15 minutes, as the advice says (panel to confirm).
+- PPH: the shock index shows two decimals; only the mother's entries re-run
+  the PPH check, so a baby check no longer adds to the alert.
+- Reports: a calendar button - Gregorian, Both or Ethiopian (Both is the
+  default). Ethiopian and Both count by Ethiopian month, the HMIS period
+  with Pagume, midnight to midnight East Africa Time; Gregorian counts by
+  Gregorian month. The CSVs carry the period in the chosen calendar, with the
+  Gregorian dates in Both mode; the register export covers the selected
+  month; file names carry the month and the Addis date.
+- Screens: a new screen opens at the top; answer-button groups are named
+  groups for screen readers; the overdue chip pulses without fading its
+  text and stops when the device asks for reduced motion; the chart header
+  sits beside its title column; the referral note dates its medication and
+  the shared text says whether oxytocin is still running; mL everywhere.
+- docs/GAP_REGISTER.md: the gap register F1-F14, N1-N5 and S1-S13 with the
+  WHO citation, the code and the test for every item. Screenshots of the
+  verification walk (demo data) in docs/screenshots/.
+- Engine, from the independent review against the WHO texts: a re-opened
+  alert always asks again; an answer left at its default is never evidence
+  that closes an alert; the PPH trigger is cumulative over the 24 hours (a
+  drape reading entered late still meets a sign recorded after it) and
+  survives an unrelated void; each alert closes at the end that follows its
+  own last finding; an urine notation the app cannot grade counts as not
+  assessed, never negative; the audit's stage-duration flags come from the
+  protocol constants. The birth record is judged for PPH over time too. While
+  an open alert waits for an answer that would clear it, the wizard step
+  starts with nothing selected, so a default can no longer leave it open
+  unnoticed.
+- Independent clinical review against the WHO form, manual and
+  implementation resource package, two passes: every alert value, recording
+  interval and stage limit matches, and every deviation is stricter or
+  added, never looser. Pass 1: safe to publish as a public preview after one
+  fix; pass 2: safe to deploy as the v2.0.0 public preview, not for facility
+  use. Every item of both passes was fixed with tests; the last four fixes,
+  after pass 2, were not reviewed again. Two browser walks of the full demo
+  case and the M6 changes, offline, at phone width and in Amharic.
+- Tests: 527, up from 445.
+
 ## 2.0.0-dev (unreleased) - milestone M5, 1 October 2026
 
 FHIR export to the plan, every screen in draft Amharic, the M4 review
