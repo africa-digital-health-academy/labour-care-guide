@@ -213,6 +213,7 @@ const STRINGS = {
   'pt.void_alert_closes': ['Alert will close: {title}', 'ማስጠንቀቂያው ይዘጋል: {title}'],
   'pt.void_alert_reopens': ['Alert will re-open: {title}', 'ማስጠንቀቂያው እንደገና ይከፈታል: {title}'],
   'pt.void_alert_opens': ['Alert will open: {title}', 'ማስጠንቀቂያ ይከፈታል: {title}'],
+  'pt.void_alert_opens_clock': ['Time limit reached, shown now: {title}', 'የጊዜ ገደብ ደርሷል፣ አሁን ይታያል: {title}'],
   'pt.void_no_change': ['No change to the labour stage or to any alert.', 'በምጥ ምዕራፉም ሆነ በማንኛውም ማስጠንቀቂያ ላይ ለውጥ የለም።'],
   'pt.void_title': ['Void entry: {type} at {time}', 'መዝገብ ውድቅ ማድረግ: {type} ({time})'],
   'pt.void_message': [

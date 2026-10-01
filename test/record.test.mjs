@@ -650,5 +650,82 @@ test('M5 review: a correction runs the time rules in the same save', () => {
   assert.deepEqual([second.resolved, second.resolvedHow], [true, 'cleared'], 'closed in the same call');
   assert.ok(r.resolved.includes(second));
   assert.deepEqual(codes(r.added), ['lcg_progress', 'lcg_progress_due'], '6 cm for 5.5 h at the corrected exam, 10 h by now (limit 5 h)');
+  assert.deepEqual(r.addedByClock, [r.added[1].title], 'only the time limit is put down to the clock');
   chartAgrees(p, LCG);
+});
+
+// ------------------------------- M5 final review: after labour, by clock ----
+
+test('M5 review: after the birth, correcting a labour entry closes its labour finding at the birth, unasked', () => {
+  // twin of 'M5: after the birth, a labour finding raised by a stage move is closed at the birth':
+  // birth at 18:00; at 19:00 the midwife corrects the descent on the 14:00 exam (6 cm since 09:00)
+  const p = admitted(11);
+  applyObservations(p, iso(10), { exam: { dilatation: 6 } }, LCG, { enteredAt: iso(10) });
+  const exam = applyObservations(p, iso(5), { exam: { dilatation: 6, descent: 3 } }, LCG, { enteredAt: iso(5) }).obs[0];
+  const first = p.alerts.find(a => a.code === 'lcg_progress');
+  applyBirth(p, { time: iso(1), outcome: 'live', mode: 'svd', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  assert.equal(first.resolvedHow, 'birth');
+  const r = correctObservation(p, exam.id, { dilatation: 6, descent: 2 }, LCG,
+    { by: 'TE', reason: 'descent mistyped', at: NOW.toISOString() });
+  const fresh = r.obs[0];
+  assert.deepEqual(fresh.flags, ['lcg_progress'], 'the chart still circles 6 cm for 5 h as it stood');
+  const again = p.alerts.find(a => a.code === 'lcg_progress' && a !== first);
+  assert.match(again.title, /No progress: 6 cm for 5 h/);
+  assert.deepEqual([again.severity, again.episode, again.resolved, again.resolvedHow, again.resolvedAt, again.obsIds],
+    ['danger', 2, true, 'birth', iso(1), [fresh.id]]);
+  assert.deepEqual(r.added, [], 'no acknowledgement asked of a delivered woman');
+  assert.ok(r.resolved.includes(again));
+  assert.deepEqual(p.alerts.filter(a => !a.resolved), []);
+});
+
+test('M5 review: after her departure on referral, correcting a labour entry closes its labour finding at the departure', () => {
+  const p = admitted(11);
+  applyObservations(p, iso(10), { exam: { dilatation: 6 } }, LCG, { enteredAt: iso(10) });
+  const exam = applyObservations(p, iso(5), { exam: { dilatation: 6, descent: 3 } }, LCG, { enteredAt: iso(5) }).obs[0];
+  applyReferral(p, { time: iso(2), reasons: ['Prolonged labour'], facility: 'Hospital' }, { by: 'TE' });
+  recordEvent(p, 'handover', iso(1.5), LCG, { by: 'TE' });
+  const r = correctObservation(p, exam.id, { dilatation: 6, descent: 2 }, LCG,
+    { by: 'TE', reason: 'descent mistyped', at: NOW.toISOString() });
+  assert.deepEqual(r.obs[0].flags, ['lcg_progress']);
+  const again = p.alerts.find(a => a.code === 'lcg_progress' && (a.obsIds || []).includes(r.obs[0].id));
+  assert.deepEqual([again.resolved, again.resolvedHow, again.resolvedAt], [true, 'handover', iso(1.5)]);
+  assert.deepEqual(r.added, [], 'she has left: nothing to acknowledge on this device');
+  assert.deepEqual(p.alerts.filter(a => !a.resolved), []);
+});
+
+test('M5 review: after the birth, a back-timed labour finding closes at the birth; a maternal one and a later entry are asked', () => {
+  const p = admitted(8);
+  applyObservations(p, iso(7), { exam: { dilatation: 6 } }, LCG, { enteredAt: iso(7) });
+  applyBirth(p, { time: iso(1), outcome: 'live', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  const r = applyObservations(p, iso(3), { baby: { fhr: 170 }, vitals: { sys: 150, dia: 95 } }, LCG, { by: 'TE' });
+  assert.deepEqual(r.obs.map(o => o.flags), [['fhr_abn'], ['htn']], 'both values are circled as they stood');
+  const fhr = p.alerts.find(a => a.code === 'fhr_abn');
+  assert.deepEqual([fhr.resolved, fhr.resolvedHow, fhr.resolvedAt], [true, 'birth', iso(1)]);
+  assert.ok(r.resolved.includes(fhr));
+  assert.deepEqual(codes(r.added), ['htn'], 'raised BP carries into the postpartum watch');
+  // an infusion still running after the birth: timed after it, its rate alert is asked as usual
+  const pp = applyObservations(p, iso(0.5), { oxytocin: { dropsMin: 70 } }, LCG, { by: 'TE' });
+  assert.deepEqual(codes(pp.added), ['oxy_rate']);
+});
+
+test('M5 review: a void reports the alerts the time rules opened apart (addedByClock)', () => {
+  // a mistyped 10 cm put the 7 cm exam after it in the second stage; the second-stage limit has
+  // just passed and the heartbeat has not run yet
+  const p = admitted(11);
+  const rec = (hAgo, values) => applyObservations(p, iso(hAgo), values, LCG, { by: 'TE', enteredAt: iso(hAgo) }).obs[0];
+  rec(10, { exam: { dilatation: 7 } });
+  const ten = rec(6, { exam: { dilatation: 10 } });
+  rec(5, { exam: { dilatation: 7 } });
+  const care = rec(2, { supportive: { companion: 'Y', painRelief: 'Y', oralFluid: 'Y', posture: 'upright' } });
+  const at = NOW.toISOString();
+  // an unrelated supportive-care entry: the void itself changes nothing; the clock opens the limit in its save
+  const pv = previewVoid(p, care.id, LCG, { at });
+  const r = voidObservation(p, care.id, LCG, { by: 'TE', reason: 'recorded on the wrong woman', at });
+  assert.deepEqual(codes(r.added), ['second_long']);
+  assert.deepEqual(r.addedByClock, [r.added[0].title]);
+  assert.deepEqual([pv.added, pv.addedByClock], [r.addedByClock, r.addedByClock], 'the dialog can label it a time limit');
+  // the mistyped 10 cm: the exam after it raises its own progress alert; the clock opens the progress limit
+  const v = voidObservation(p, ten.id, LCG, { by: 'TE', reason: 'typed 10 for 7', at });
+  assert.deepEqual(codes(v.added), ['lcg_progress', 'lcg_progress_due']);
+  assert.deepEqual(v.addedByClock, [v.added[1].title], 'the alert raised by an entry is not put down to the clock');
 });

@@ -537,8 +537,13 @@ function consequenceLines(p, o, pv) {
   // alert titles come from the engine and stay English (not machine-translated)
   for (const title of pv.resolved || []) lines.push(t('pt.void_alert_closes', { title }));
   for (const title of pv.reopened || []) lines.push(t('pt.void_alert_reopens', { title }));
-  // entries judged again when a stage start moves can raise an alert (record.js restaging)
-  for (const title of pv.added || []) lines.push(t('pt.void_alert_opens', { title }));
+  // entries judged again when a stage start moves can raise an alert (record.js
+  // restaging); the time rules run in the same save, and an alert the clock
+  // opened is labelled as a time limit, not as caused by this entry
+  const byClock = new Set(pv.addedByClock || []);
+  for (const title of pv.added || []) {
+    lines.push(t(byClock.has(title) ? 'pt.void_alert_opens_clock' : 'pt.void_alert_opens', { title }));
+  }
   if (!lines.length) lines.push(t('pt.void_no_change'));
   return lines;
 }
