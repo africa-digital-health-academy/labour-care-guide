@@ -10,11 +10,18 @@
 // {name}-style placeholders are filled by t(); keep every one in both languages.
 
 export const en = {
-  // ---- reports: month bar
+  // ---- reports: calendar choice (M6) and month bar
+  'rp.calendar': 'Calendar',
+  'rp.cal_gregorian': 'Gregorian',
+  'rp.cal_both': 'Both',
+  'rp.cal_ethiopian': 'Ethiopian',
+  'rp.calendar_note': 'HMIS reports count by Ethiopian month; WHO and partner reports by Gregorian month. This device remembers the choice.',
+  'rp.calendar_not_saved': 'The calendar choice could not be saved on this device: {error}',
   'rp.prev_month': 'Previous month',
   'rp.next_month': 'Next month',
   'rp.this_month': 'Back to this month',
-  // Gregorian month names (the Reports month is a Gregorian month)
+  // Gregorian month names (Gregorian months, and the Gregorian days of an
+  // Ethiopian month); the Ethiopian month names come from js/ethiopic.js
   'rp.month_1': 'January',
   'rp.month_2': 'February',
   'rp.month_3': 'March',
@@ -88,11 +95,11 @@ export const en = {
   'rp.export_register': 'Birth register (CSV)',
   'rp.export_backup': 'Full backup (JSON)',
   'rp.restore_backup': 'Restore backup',
-  'rp.export_note': 'The indicators file covers {month}. The birth register lists every case on this device except demo cases.',
+  'rp.export_note': 'The indicators file and the birth register cover {month}. The register lists every woman admitted, delivered or referred out in that month, except demo cases; the full backup holds every case.',
   'rp.backup_warn': 'Back up regularly — all data lives only on this device until a sync server is configured. Keep exported files confidential: they contain patient data.',
   'rp.export_failed': 'Export failed: {error}',
   'rp.ind_exported': 'Indicators for {month} exported',
-  'rp.register_exported': 'Birth register exported: {cases}',
+  'rp.register_exported': 'Birth register for {month} exported: {cases}',
   'rp.n_case': '{n} case',
   'rp.n_cases': '{n} cases',
   'rp.demo_left_out': '({n} demo left out)',
@@ -169,7 +176,13 @@ export const en = {
 // mL), file formats and programme names stay in Latin script, as Ethiopian
 // clinicians write them.
 export const am = {
-  // ---- reports: month bar
+  // ---- reports: calendar choice and month bar
+  'rp.calendar': 'የዘመን አቆጣጠር',
+  'rp.cal_gregorian': 'ግሪጎሪያን',
+  'rp.cal_both': 'ሁለቱም',
+  'rp.cal_ethiopian': 'የኢትዮጵያ',
+  'rp.calendar_note': 'የHMIS ሪፖርቶች በኢትዮጵያ ወር ይቆጠራሉ፤ የWHO እና የአጋር ድርጅቶች ሪፖርቶች ደግሞ በግሪጎሪያን ወር። ይህ መሣሪያ ምርጫውን ያስታውሳል።',
+  'rp.calendar_not_saved': 'የዘመን አቆጣጠር ምርጫው በዚህ መሣሪያ ላይ ሊቀመጥ አልቻለም፦ {error}',
   'rp.prev_month': 'ያለፈው ወር',
   'rp.next_month': 'የሚቀጥለው ወር',
   'rp.this_month': 'ወደዚህ ወር ተመለስ',
@@ -246,11 +259,11 @@ export const am = {
   'rp.export_register': 'የወሊድ መዝገብ (CSV)',
   'rp.export_backup': 'ሙሉ ምትኬ (JSON)',
   'rp.restore_backup': 'ምትኬ መልስ',
-  'rp.export_note': 'የአመልካቾቹ ፋይል የ{month} ነው። የወሊድ መዝገቡ ከማሳያ (demo) መዝገቦች በስተቀር በዚህ መሣሪያ ላይ ያሉትን ሁሉንም መዝገቦች ይዘረዝራል።',
+  'rp.export_note': 'የአመልካቾቹ ፋይልና የወሊድ መዝገቡ የ{month} ናቸው። መዝገቡ በዚያ ወር የገቡትን፣ የወለዱትን ወይም ሪፈር የተደረጉትን ሴቶች በሙሉ ይዘረዝራል፤ የማሳያ (demo) መዝገቦች አይካተቱም። ሙሉ ምትኬው ሁሉንም መዝገቦች ይይዛል።',
   'rp.backup_warn': 'በየጊዜው ምትኬ ያስቀምጡ፤ የማመሳሰያ (sync) ሰርቨር እስኪዘጋጅ ድረስ ሁሉም መረጃ የሚቀመጠው በዚህ መሣሪያ ላይ ብቻ ነው። የወጡትን ፋይሎች በሚስጥር ይያዙ፤ የታካሚ መረጃ ይዘዋል።',
   'rp.export_failed': 'ወደ ውጪ መላክ አልተሳካም፦ {error}',
   'rp.ind_exported': 'የ{month} አመልካቾች ወደ ውጪ ተልከዋል',
-  'rp.register_exported': 'የወሊድ መዝገብ ወደ ውጪ ተልኳል፦ {cases}',
+  'rp.register_exported': 'የ{month} የወሊድ መዝገብ ወደ ውጪ ተልኳል፦ {cases}',
   'rp.n_case': '{n} መዝገብ',
   'rp.n_cases': '{n} መዝገቦች',
   'rp.demo_left_out': '({n} የማሳያ መዝገብ አልተካተተም)',

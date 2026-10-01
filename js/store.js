@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS = {
   lang: 'en',
   sound: true,
   ethiopianDates: true,
+  reportCalendar: 'both',         // Reports: 'gregorian' | 'both' | 'ethiopian' (indicators.js)
   midwifeName: '',
 };
 

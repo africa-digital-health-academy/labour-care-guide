@@ -69,7 +69,7 @@ test('Ethiopian dates: EC in English, the Amharic era abbreviation in Amharic', 
 });
 
 test('the MgSO4 loading dose has one source, used by the eclampsia card and the severe BP alert', () => {
-  assert.equal(MGSO4_LOADING, '4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 ml lidocaine 2%)');
+  assert.equal(MGSO4_LOADING, '4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 mL lidocaine 2%)');
   const ecl = EMERGENCIES.find(e => e.code === 'eclampsia');
   assert.ok(ecl.advice.some(a => a.includes(MGSO4_LOADING)));
   const alerts = evaluateObs(mkPatient(), { type: 'vitals', time: iso(0), v: { sys: 170, dia: 115 } }, LCG);

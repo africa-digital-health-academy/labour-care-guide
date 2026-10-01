@@ -51,7 +51,7 @@ test('haemodynamic cut-offs: pulse > 100, systolic < 100, diastolic < 60, shock 
   assert.deepEqual(sign({ pulse: 80, sys: 99, dia: 70 }), ['systolic 99']);
   assert.deepEqual(sign({ pulse: 80, sys: 100, dia: 60 }), []);
   assert.deepEqual(sign({ pulse: 80, sys: 110, dia: 59 }), ['diastolic 59']);
-  assert.ok(sign({ pulse: 110, sys: 105, dia: 70 }).includes('shock index 1.0'));
+  assert.ok(sign({ pulse: 110, sys: 105, dia: 70 }).includes('shock index 1.05'));
 });
 
 test('drape readings are cumulative: the total is the highest reading, and the birth estimate counts', () => {
@@ -192,6 +192,98 @@ test('when the PPH is still met after a void, it shows the remaining total, not 
   assert.equal(pph.resolved, false);
   assert.match(pph.title, /550 mL/);
   assert.equal(pph.meta.totalMl, 550);
+});
+
+// ------------------------- M6 review: the trigger is cumulative ----
+// 300 mL with an abnormal sign, or 500 mL (WHO/FIGO/ICM 2025): a reading
+// entered late completes the trigger with the mother's entries made after its
+// own time; it was judged only as the case stood at its own time.
+
+const after = m => new Date(+new Date(iso(2)) + m * 60000).toISOString(); // minutes after the birth of born()
+const check = pulse => ({ ppMother: { bleeding: 'normal', tone: 'firm', pulse, sys: 120, dia: 76 } });
+
+test('M6 review: a drape reading entered late completes the PPH trigger with a pulse recorded after its own time', () => {
+  // pulse 112 recorded on time 20 min after the birth; the 10-minute drape reading of 350 mL entered at 30 min
+  const p = born();
+  const sign = applyObservations(p, after(20), check(112), LCG, { by: 'TE', enteredAt: after(20) });
+  assert.deepEqual(sign.added, [], 'pulse 112 alone: no PPH, and below the stand-alone pulse alert');
+  const late = applyObservations(p, after(10), { bloodloss: { ml: 350, method: 'drape' } }, LCG, { by: 'TE', enteredAt: after(30) });
+  const pph = late.added.find(a => a.code === 'pph');
+  assert.ok(pph, 'the 350 mL and the pulse after it meet the trigger: raised now, not at the next mother check');
+  assert.match(pph.title, /350 mL with pulse 112/);
+  assert.deepEqual([pph.time, pph.raisedAt, pph.obsIds, late.obs[0].flags], [after(20), after(30), [late.obs[0].id], ['pph']],
+    'stamped when the trigger was met, raised when the reading revealed it');
+  // her pulse back to 88 at 40 min before the reading is entered: the trigger was met at 20 min all the same
+  const q = born();
+  applyObservations(q, after(20), check(112), LCG, { by: 'TE', enteredAt: after(20) });
+  applyObservations(q, after(40), check(88), LCG, { by: 'TE', enteredAt: after(40) });
+  const settled = applyObservations(q, after(10), { bloodloss: { ml: 350 } }, LCG, { by: 'TE', enteredAt: after(45) });
+  const met = settled.added.find(a => a.code === 'pph');
+  assert.deepEqual([met.time, met.meta.totalMl, met.meta.signs], [after(20), 350, ['pulse']]);
+});
+
+test('M6 review: a PPH completed late is raised once; later entries join it, and an earlier, lower reading never lowers its figures', () => {
+  const p = born();
+  applyObservations(p, after(20), check(112), LCG, { by: 'TE', enteredAt: after(20) });
+  const pph = applyObservations(p, after(10), { bloodloss: { ml: 350 } }, LCG, { by: 'TE', enteredAt: after(30) }).added[0];
+  const next = applyObservations(p, after(35), check(108), LCG, { by: 'TE', enteredAt: after(35) });
+  assert.deepEqual([next.added, pph.count, p.alerts.filter(a => a.code === 'pph').length], [[], 2, 1], 'the next check joins it');
+  Object.assign(pph, { ack: true, action: 'intervention', actionTime: after(36) });
+  const more = applyObservations(p, after(50), { bloodloss: { ml: 600 } }, LCG, { by: 'TE', enteredAt: after(50) });
+  assert.deepEqual([more.added, pph.meta.totalMl], [[pph], 600], 'more blood asks again');
+  Object.assign(pph, { ack: true, actionTime: after(51) });
+  // a 450 mL reading taken at 45 min, entered late: no new evidence - the total is 600 mL
+  const back = applyObservations(p, after(45), { bloodloss: { ml: 450 } }, LCG, { by: 'TE', enteredAt: after(55) });
+  assert.deepEqual([back.added, pph.ack, pph.meta.totalMl], [[], true, 600], 'not asked again, the figures stay');
+  assert.match(pph.title, /600 mL/);
+  // closed by hand: a later reading below the total measured is no new episode
+  resolveAlert(p, pph.id, { by: 'TE', reason: 'bleeding controlled', at: after(60) });
+  const calm = applyObservations(p, after(70), { bloodloss: { ml: 550 } }, LCG, { by: 'TE', enteredAt: after(70) });
+  assert.deepEqual([calm.added, p.alerts.filter(a => a.code === 'pph').length], [[], 1], 'raised once');
+});
+
+test('M6 review: voiding an unrelated entry keeps a PPH whose trigger was met, though her pulse has settled since', () => {
+  const p = born();
+  const volume = applyObservations(p, after(10), { bloodloss: { ml: 350 } }, LCG, { by: 'TE', enteredAt: after(10) }).obs[0];
+  applyObservations(p, after(20), check(112), LCG, { by: 'TE', enteredAt: after(20) });
+  const pph = p.alerts.find(a => a.code === 'pph');
+  applyObservations(p, after(40), check(88), LCG, { by: 'TE', enteredAt: after(40) });
+  const dup = applyObservations(p, after(45), { ppBaby: { breathing: 'normal', feeding: 'good' } }, LCG, { by: 'TE', enteredAt: after(45) }).obs[0];
+  voidObservation(p, dup.id, LCG, { by: 'TE', reason: 'duplicate', at: after(50) });
+  assert.deepEqual([pph.resolved, pph.meta.totalMl, pph.meta.signs], [false, 350, ['pulse']], 'met at 20 min: it stands');
+  // the reading it rests on, voided: the trigger was never met
+  voidObservation(p, volume.id, LCG, { by: 'TE', reason: 'drape of another woman', at: after(55) });
+  assert.deepEqual([pph.resolved, pph.resolvedHow], [true, 'void']);
+});
+
+// ---------- M6 review pass 2: the birth record judges the trigger from the birth on ----
+// A birth recorded late was judged at the birth time alone: the mother's
+// entries already made after the birth never completed the trigger with it.
+
+/** Born at iso(2) in a second stage; pulses [minutes after the birth, bpm] recorded first, the birth saved 40 min after it. */
+function birthRecordedLate(pulses, delivery = {}) {
+  const p = mkPatient({ status: 'second', secondStageStart: iso(3) });
+  for (const [m, pulse] of pulses) applyObservations(p, after(m), { pulse: { pulse } }, LCG, { by: 'TE', enteredAt: after(m) });
+  const birth = { time: iso(2), outcome: 'live', placentaComplete: 'Y', eblMl: 350, ppVitals: { pulse: 90 }, ...delivery };
+  return { p, added: applyBirth(p, birth, {}, LCG, { by: 'TE', enteredAt: after(40) }).added };
+}
+
+test('M6 review pass 2: a birth recorded late meets the PPH trigger with a pulse taken after the birth, stamped when it was met', () => {
+  // born 14:00; pulse 115 through the labour wizard at 14:20 (the birth not yet
+  // on the tablet); the birth record saved at 14:40: 350 mL, postpartum pulse 90
+  const { p, added } = birthRecordedLate([[20, 115]]);
+  assert.deepEqual(p.obs[0].flags, [], 'pulse 115 in labour: no alert of its own');
+  const pph = added.find(a => a.code === 'pph');
+  assert.ok(pph, 'the 350 mL and the pulse of 115 after the birth meet the trigger');
+  assert.match(pph.title, /^PPH: 350 mL with pulse 115$/);
+  assert.deepEqual([pph.time, pph.raisedAt, pph.source, pph.severity], [after(20), after(40), 'birth', 'danger'],
+    'stamped when the trigger was met, raised when the birth record revealed it');
+});
+
+test('M6 review pass 2: a normal birth raises nothing extra when the birth record is judged from the birth on', () => {
+  assert.deepEqual(birthRecordedLate([[-10, 115], [20, 88]]).added, [], 'a pulse of 115 in labour, before the birth, is no PPH sign');
+  assert.deepEqual(birthRecordedLate([[20, 115]], { eblMl: 250 }).added, [], '250 mL is below the 300 mL of the trigger');
+  assert.deepEqual(birthRecordedLate([]).added, [], '350 mL with a pulse of 90 at the birth');
 });
 
 test('the trigger is only checked in the 24 h after birth', () => {

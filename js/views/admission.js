@@ -88,14 +88,12 @@ const PRESENTATION_OPTIONS = [
 ];
 
 /**
- * A labelled question with no default answer. A <label> forwards a tap on its
- * text to its first button, which would silently pick the first option.
+ * A labelled question with no default answer: ui.field() makes a group of
+ * buttons a named group, never a <label> (a <label> forwards a tap on its
+ * text to its first button, and names only that button for screen readers).
  */
 function choiceField(labelText, control) {
-  return h('label', {
-    class: 'field',
-    onclick: e => { if (!e.target.closest('button, input, select, textarea')) e.preventDefault(); },
-  }, h('span', null, labelText), control);
+  return field(labelText, control);
 }
 
 /** Segmented choice that may stay unanswered: "clear" takes it back to unset. */

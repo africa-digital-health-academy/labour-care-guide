@@ -86,6 +86,9 @@ const en = {
   ui_h_min_ago: '{h} h {m} min ago',
   ui_dur_m: '{m} min',
   ui_dur_hm: '{h} h {m} min',
+  // M6: messages from demo.js and db.js
+  demo_loaded: 'Demo case loaded - open it from the ward board',
+  db_blocked: 'Close this app in other open tabs to finish updating.',
 };
 
 const am = {
@@ -161,6 +164,8 @@ const am = {
   ui_h_min_ago: 'ከ{h} ሰዓት {m} ደቂቃ በፊት',
   ui_dur_m: '{m} ደቂቃ',
   ui_dur_hm: '{h} ሰዓት {m} ደቂቃ',
+  demo_loaded: 'የማሳያ ፋይሉ ተጭኗል - ከማዋለጃ ክፍል ዝርዝር ይክፈቱት',
+  db_blocked: 'ዝማኔውን ለመጨረስ ይህን መተግበሪያ በሌሎች ክፍት ትሮች ውስጥ ይዝጉ።',
 };
 
 // Per-area string fragments (M5), merged into the two dictionaries. Each area

@@ -6,9 +6,9 @@ The app guides bedside recording one question at a time, draws the labour chart 
 
 This repository is version 2 of the project first published as [Parthograph](https://github.com/DrTemesgen/parthograph) (June 2026), rebuilt after an audit against the current WHO document set: [docs/WHO_ALIGNMENT_2026.md](docs/WHO_ALIGNMENT_2026.md). Improvements this rebuild proposes to WHO itself are in [docs/SUGGESTIONS_TO_WHO.md](docs/SUGGESTIONS_TO_WHO.md).
 
-> **Status (October 2026): version 2 is in development.** Milestones M0 to M5 are done (M5: FHIR fixes, Amharic draft of the screens, documentation), and M6 (verification, review, publication) follows; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md). The repository stays private until M6. The v1 application remains live at https://drtemesgen.github.io/parthograph/ and keeps working on installed tablets.
+> **Status (1 October 2026): version 2.0.0 is a public preview** at https://drtemesgen.github.io/labour-care-guide/ - for demonstration, training and review, **not for facility use** until the clinical panel has reviewed it (see [docs/GAP_REGISTER.md](docs/GAP_REGISTER.md), section 4). Milestones M0 to M6 are done: the test suite, two browser walks of the demo case and an independent two-pass review of the engine against the WHO texts. See [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md). The v1 application remains live at https://drtemesgen.github.io/parthograph/ and keeps working on installed tablets.
 
-> **Safety status: not for facility use.** Every clinical rule, and every value marked `PANEL-TO-CONFIRM` in the code, must first be reviewed by an Ethiopian obstetric and midwifery clinical panel, and any pilot needs approval by the responsible health authorities and supervision. This software is a decision-support and documentation aid for skilled birth attendants. It is not a certified medical device and does not replace clinical judgement, national protocols or senior consultation. It is not a WHO product and WHO does not endorse it (see [NOTICE-WHO.md](NOTICE-WHO.md)).
+> **Safety status: not for facility use.** Every clinical rule, and every value marked `PANEL-TO-CONFIRM` in the code, must first be reviewed by an Ethiopian obstetric and midwifery clinical panel, and any pilot needs approval by the responsible health authorities and supervision. Publishing v2.0.0 will not change this: facility use waits for the panel. This software is a decision-support and documentation aid for skilled birth attendants. It is not a certified medical device and does not replace clinical judgement, national protocols or senior consultation. It is not a WHO product and WHO does not endorse it (see [NOTICE-WHO.md](NOTICE-WHO.md)).
 
 ## What it does
 
@@ -48,6 +48,8 @@ npm test                       # the node:test suite in test/
 
 Serve the folder over HTTP rather than opening `index.html` from disk: browsers do not run the app's ES modules from a `file://` address, and the service worker (offline mode, update chip) needs `localhost` or HTTPS.
 
+When you test a new version locally, serve without browser caching (`npx http-server . -p 8080 -c-1`) or tick "Disable cache" in the browser's developer tools. The Python server sends no cache headers, so a browser may keep files of the previous version for hours on a load that the service worker does not control.
+
 ## File map
 
 ```
@@ -81,7 +83,7 @@ js/i18n/forms.js        admission, birth record and referral strings (keys fm.)
 js/i18n/reports.js      reports, settings and app shell strings (keys rp.)
 js/views/               dashboard, admission, patient, delivery, referral, reports, settings
 test/                   node:test suite, one file per area (npm test)
-docs/                   WHO alignment audit, suggestions to WHO, design, research, FHIR mapping, roadmap
+docs/                   WHO alignment audit, gap register, suggestions to WHO, design, research, FHIR mapping, roadmap
 NOTICE-WHO.md           attribution and licence notice for WHO material
 CHANGELOG.md            changes per milestone
 ```

@@ -11,10 +11,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   WIZARD_TYPES, wizardTypeFor, computeDefaulted, wizardSteps, prefillValues, currentCode, timeChoices,
-  ackRepeat, ackPreselect, acknowledgeAlerts, ackRepeatText, ackItemTag,
+  ackRepeat, ackPreselect, acknowledgeAlerts, ackRepeatText, ackItemTag, alertsToAcknowledge,
+  sessionSteps, stepProblem,
 } from '../js/wizard.js';
+import { fieldsAwaitingEvidence } from '../js/alerts.js';
 import { PROTOCOLS, dueList } from '../js/protocol.js';
-import { applyObservations } from '../js/record.js';
+import { applyObservations, applyBirth } from '../js/record.js';
 import { t, setLang } from '../js/i18n.js';
 import { fmtTime } from '../js/ui.js';
 import { NOW, iso, mkPatient, LCG } from './helpers.mjs';
@@ -351,4 +353,52 @@ test('acknowledgeAlerts: matched by id after a restore; an earlier action saved 
   const p = mkPatient({ alerts: [waiting({ reAlertedAt: iso(1) })] });
   acknowledgeAlerts(p, [structuredClone(p.alerts[0])], 'monitoring', 'TE', iso(0.9));
   assert.deepEqual([p.alerts[0].ack, p.alerts[0].ackCount, p.alerts[0].actionTime], [true, 2, iso(0.9)]);
+});
+
+// ------------------------------------------------------------------- M6 --
+
+test('the acknowledgement dialog never asks about a silent note or an alert closed as it was recorded (needsAck false)', () => {
+  const list = [
+    { id: 'a', severity: 'warn', needsAck: false }, { id: 'b', severity: 'info' }, { id: 'c', severity: 'danger' },
+    { id: 'd', severity: 'warn', resolved: true }, null,
+  ];
+  assert.deepEqual(alertsToAcknowledge(list).map(a => a.id), ['c', 'd'], 'a closed alert shown open still asks');
+  assert.deepEqual(alertsToAcknowledge(undefined), []);
+  // through the record layer: a late FHR entered after the birth closes at the birth, asking nothing
+  const p = mkPatient({ createdAt: iso(8), admission: { time: iso(8) }, activeStartTime: iso(7) });
+  applyBirth(p, { time: iso(1), outcome: 'live', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  const r = applyObservations(p, iso(3), { baby: { fhr: 170 }, vitals: { sys: 150, dia: 95 } }, LCG, { by: 'TE' });
+  assert.deepEqual(alertsToAcknowledge(p.alerts).map(a => a.code), ['htn']);
+  assert.deepEqual(alertsToAcknowledge(r.added).map(a => a.code), ['htn']);
+});
+
+// ------------- M6 review pass 2: no preselection while an alert waits on the answer ----
+// A default is never evidence (alerts.js readsAll): a preselected "none", 0 or
+// Y tapped through with Next left its alert open until the birth. While an
+// open alert waits on a field (alerts.js fieldsAwaitingEvidence), a new
+// entry's step for it preselects nothing and Next asks for an answer; Skip
+// stays (not assessed: the alert stays open). Every other default stays.
+
+test('M6 review pass 2: an open alert on a defaulted field - no preselection, an answer before Next; without it the default stays', () => {
+  const p = mkPatient();
+  const decelOf = q => sessionSteps('baby', fieldsAwaitingEvidence(q)).find(s => s.key === 'decel');
+  const plain = decelOf(p);
+  assert.deepEqual([plain.dflt, plain.awaited, stepProblem(plain, { fhr: 140, decel: 'none' })], ['none', undefined, null],
+    'no open alert: "none" preselected as before, and Next passes');
+  applyObservations(p, iso(2), { baby: { fhr: 165, decel: 'late' }, supportive: { companion: 'N' } }, LCG, { by: 'TE' });
+  const decel = decelOf(p);
+  assert.deepEqual([decel.dflt, decel.awaited, decel.required], [undefined, true, undefined], 'nothing preselected; Skip still offered');
+  assert.equal(stepProblem(decel, { fhr: 140 }), t('wz.answer_awaited', { button: t('skip') }), 'Next with no answer');
+  assert.equal(stepProblem(decel, { fhr: 140, decel: 'none' }), null, '"none" tapped on purpose');
+  assert.deepEqual(sessionSteps('supportive', fieldsAwaitingEvidence(p)).map(s => s.dflt), [undefined, 'Y', 'Y', 'upright'],
+    'only the companion answer is awaited');
+  assert.deepEqual(sessionSteps('exam', fieldsAwaitingEvidence(p)), wizardSteps('exam'), 'nothing awaited: the steps as before');
+  assert.equal(stepProblem(step('baby', 'fhr'), {}), t('wz.required'), 'a required step keeps its message');
+  try {
+    setLang('am');
+    assert.equal(stepProblem(decel, {}), t('wz.answer_awaited', { button: t('skip') }));
+    assert.ok(stepProblem(decel, {}).includes(t('skip')), 'names the Skip button in the screen language');
+  } finally {
+    setLang('en');
+  }
 });

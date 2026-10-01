@@ -372,8 +372,9 @@ const RISK_SHORT = {
 const riskShort = r => (own(RISK_SHORT, r) ? RISK_SHORT[r] : String(r).replace(/_/g, ' '));
 
 /**
- * Section 1 of the form, in one line from the page edge, cut at 220
- * characters; the risk factors come last, as on the WHO form.
+ * Section 1 of the form, in one line beside the title column (which stays
+ * visible on screen and on paper), cut at 190 characters; the risk factors
+ * come last, as on the WHO form.
  */
 function headLine(p) {
   const rom = p.romUnknown ? 'U (time unknown)' : p.romTime ? dayTime(p.romTime) : 'not recorded';
@@ -384,14 +385,14 @@ function headLine(p) {
     `Active labour diagnosis: ${p.activeStartTime ? dayTime(p.activeStartTime) : 'not yet'}`,
     `Ruptured membranes: ${rom}`, `Risk factors: ${risks}`,
   ].join('  |  ');
-  return line.length > 220 ? line.slice(0, 217) + '...' : line;
+  return line.length > 190 ? line.slice(0, 187) + '...' : line;
 }
 
 function headings(ctx) {
   const { pre, first, sec } = ctx;
   const st = ROW.stage.y + 9.5, tm = ROW.time.y + 8.8, hr = ROW.hours.y + 8.8;
   const time = { size: 7, cls: 'col-time' }, hour = { size: 7.5, weight: 700, cls: 'col-hour', fill: MUTED };
-  let s = txt(G.pad, 11, headLine(ctx.p), { size: 7.4, anchor: 'start' })
+  let s = txt(GX, 11, headLine(ctx.p), { size: 7.4, anchor: 'start' })
     + txt(ctx.W - G.pad, 11, `Sheet ${ctx.sheet} of ${ctx.n}`, { size: 8, anchor: 'end', weight: 700 });
   if (pre) {
     s += txt((pre.x0 + pre.x1) / 2, st, pre.cols > 1 ? 'LATENT / ADMISSION' : 'LATENT', { size: 6.8, weight: 700, fill: MUTED });
@@ -672,7 +673,7 @@ const LCG_LEGEND = 'X cervical dilatation (cm); O descent (fifths palpable above
   + 'Latent / admission columns are labelled with the time each spans; +n = n more entries in that cell than the one shown. '
   + 'Y yes, N no, D declined; SP supine, MO mobile; decelerations N none, E early, L late, V variable, Pr prolonged; '
   + 'fluid I intact, C clear, M+ to M+++ meconium, B blood; position A anterior, P posterior, T transverse; '
-  + 'urine P protein, A acetone (- negative, tr trace); ? = an entry without initials. '
+  + 'urine P protein, A acetone (- negative, tr trace, ? not gradable); ? in the initials row = an entry without initials. '
   + 'Each sheet covers 12 hours of the active first stage; the second stage is on the sheet where it began.';
 
 function lcgChart(p, settings, now, opts) {

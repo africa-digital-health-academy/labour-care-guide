@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { auditCase, isAckNote } from '../js/audit.js';
-import { PROTOCOLS } from '../js/protocol.js';
+import { PROTOCOLS, LIMITS } from '../js/protocol.js';
 import { NOW, mkPatient } from './helpers.mjs';
 
 const MIN = 60000;
@@ -160,4 +160,52 @@ test('acknowledgement notes saved before M5 (no kind) are recognised by their op
   assert.equal(isAckNote({ kind: 'ack', text: '' }), true);
   assert.equal(isAckNote({ text: 'Progress normal' }), false);
   assert.equal(isAckNote(null), false);
+});
+
+test('an alert closed in the same save that raised it (needsAck false) is not counted in alert handling', () => {
+  const p = lcgCase();
+  const t0 = at(30);
+  p.alerts = [
+    { id: 'a1', code: 'fhr_abn', severity: 'warn', time: t0, raisedAt: t0, ack: true, action: 'monitoring', actionTime: at(35) },
+    { id: 'a2', code: 'weak_contractions', severity: 'warn', time: t0, raisedAt: t0, resolved: true, needsAck: false },
+  ];
+  const a = auditCase(p, PROTOCOLS.lcg, NOW);
+  assert.equal(a.alerts.raised, 1, 'only the alert the midwife could handle');
+  assert.equal(a.alerts.ackedInTime, 1);
+});
+
+test('M6 review: the stage-length flags follow the protocol limits - Annex 8, 12 h and 3 h, whatever the parity', () => {
+  assert.deepEqual(LIMITS.audit.stageLongHours, { active: 12, second: 3 });
+  // a birth after `activeMin` of active first stage and `secondMin` of second stage
+  const flags = (activeMin, secondMin, para = 0) => {
+    const s = +NOW - (activeMin + secondMin + 60) * MIN;
+    const t = m => new Date(s + m * MIN).toISOString();
+    const p = mkPatient({
+      name: 'Stage lengths', para, onsetMode: 'spontaneous', status: 'delivered', activeStartTime: t(0),
+      secondStageStart: t(activeMin), delivery: { time: t(activeMin + secondMin), outcome: 'live' },
+    });
+    const d = auditCase(p, PROTOCOLS.lcg, NOW).durations;
+    return [d.activeOver12h, d.secondOver3h];
+  };
+  assert.deepEqual(flags(720, 180), [true, true]);
+  assert.deepEqual(flags(719, 179), [false, false]);
+  assert.deepEqual(flags(719, 179, 2), [false, false], 'a multipara too: not the 10 h and 2 h alert limits');
+  const kept = LIMITS.audit.stageLongHours;
+  LIMITS.audit.stageLongHours = { active: 10, second: 2 };
+  try {
+    assert.deepEqual(flags(600, 120), [true, true], 'read from the protocol limits, not a number of its own');
+    assert.deepEqual(flags(599, 119), [false, false]);
+  } finally {
+    LIMITS.audit.stageLongHours = kept;
+  }
+});
+
+test('the voided count covers observations, medication and notes', () => {
+  const p = lcgCase();
+  p.meds = [{ id: 'm1', kind: 'medicine', time: at(20), voided: { by: 'TE', reason: 'typo' } }];
+  p.notes = [{ id: 'n1', time: at(25), text: 'x', voided: { by: 'TE', reason: 'typo' } }];
+  const before = auditCase(p, PROTOCOLS.lcg, NOW).voided;
+  p.obs[0].voided = { by: 'TE', reason: 'typo' };
+  assert.equal(auditCase(p, PROTOCOLS.lcg, NOW).voided, before + 1);
+  assert.ok(before >= 2, 'the voided medicine and note are counted');
 });

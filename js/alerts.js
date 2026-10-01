@@ -27,7 +27,7 @@
 import {
   LIMITS, getProtocol, parityKey, byParity, PARITY_LABEL, exams, timeReachedCurrentDilatation,
   lineStatus, monitoringStage, isLabouring, hoursBetween, minutesBetween, fmtMin, toMs, byTime,
-  activeObs, secondStageClockStart, secondStagePushing, birthTime,
+  activeObs, secondStageClockStart, secondStagePushing, birthTime, afterBirthEntry,
 } from './protocol.js';
 import { uid } from './db.js';
 
@@ -41,21 +41,23 @@ const nowISO = () => new Date().toISOString();
 const REFER_PREP = 'If not resolving: arrange referral early - call the receiving hospital and the ambulance now; transport takes time.';
 const SENIOR = 'Alert a senior midwife or doctor; record the assessment and the action taken';
 const VERIFY_10 = 'Count again over another 10 minutes; if confirmed, alert a senior provider';
+// The re-check interval is the FHR schedule's own while these alerts are open
+// (protocol.js LIMITS.fhrCloseMin, CLOSE_FHR_CODES), so advice and due chip agree.
 const INTRAUTERINE_RESUS = [
   'Turn the woman onto her LEFT side',
   'Give IV fluids (Normal Saline / Ringer’s Lactate)',
   'Stop oxytocin if running',
-  'Re-check FHR in 5–15 minutes, listen through a contraction + 30 s after',
+  `Re-check FHR in 5–${LIMITS.fhrCloseMin} minutes, listen through a contraction + 30 s after`,
 ];
 /**
  * MgSO4 loading dose (Pritchard regimen: 4 g of the 20% solution IV, then
- * 10 g of the 50% solution IM, 5 g in each buttock with 1 ml of 2% lidocaine
+ * 10 g of the 50% solution IM, 5 g in each buttock with 1 mL of 2% lidocaine
  * in the same syringe; MOH 2021, WHO MCPC). One source for the severe
  * hypertension alert, the eclampsia card and the pre-referral checklist; a
  * drug dose, so it stays in English in every language until the clinical
  * panel validates a translation. PANEL-TO-CONFIRM: wording and IV duration.
  */
-export const MGSO4_LOADING = '4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 ml lidocaine 2%)';
+export const MGSO4_LOADING = '4 g IV (20%) slowly over 5–20 min + 10 g IM (50%: 5 g each buttock with 1 mL lidocaine 2%)';
 
 const SEVERE_HTN = [
   'Check urine protein NOW', 'Severe pre-eclampsia until proven otherwise',
@@ -65,14 +67,29 @@ const SEVERE_HTN = [
 
 // ------------------------------------------------------------ value tests --
 
-const URINE_GRADES = { nil: 0, neg: 0, negative: 0, '-': 0, trace: 0.5, '+': 1, '++': 2, '+++': 3, '++++': 4 };
+const URINE_WORDS = { nil: 0, neg: 0, negative: 0, '-': 0, trace: 0.5, tr: 0.5 };
 
-/** Dipstick reading as a number: Negative/nil 0, Trace 0.5, + 1 ... ++++ 4 (manual Table 5; F9). */
+/**
+ * Dipstick reading as a number: Negative/nil 0, Trace 0.5, + 1 ... ++++ 4
+ * (manual Table 5; F9). The manual's other notations read the same: 1+ to 4+,
+ * with or without the P (protein) or A (acetone) letter ('P++', 'A 2+',
+ * 'P -', 'P Trace'). Anything else is null - not assessed: it neither alerts
+ * (FLAG.urine) nor clears an alert (RESOLVE_ON), never "negative".
+ */
 export function urineGrade(s) {
   if (s == null || s === '') return null;
-  const k = String(s).trim().toLowerCase();
-  return Object.prototype.hasOwnProperty.call(URINE_GRADES, k) ? URINE_GRADES[k] : null;
+  const k = String(s).trim().toLowerCase()
+    .replace(/[\u2012-\u2015\u2212]/g, '-')   // a typographic dash or minus sign is "-"
+    .replace(/^[pa]\s*/, '')                   // the P or A letter of the form
+    .replace(/\s+/g, '');
+  if (Object.prototype.hasOwnProperty.call(URINE_WORDS, k)) return URINE_WORDS[k];
+  if (/^\+{1,4}$/.test(k)) return k.length;
+  const n = /^([1-4])\+$/.exec(k);
+  return n ? Number(n[1]) : null;
 }
+
+/** A dipstick reading the app can grade (urineGrade); any other value is not assessed. */
+const graded = g => urineGrade(g) != null;
 
 /** Posture is coded SP (supine) or MO (mobile) on the form; v1 stored 'supine'. */
 export const isSupine = v => v === 'SP' || v === 'supine';
@@ -95,7 +112,7 @@ export const FLAG = {
   sys: n => n != null && (n < LIMITS.sys.shock || n >= LIMITS.sys.high),
   dia: n => n != null && n >= LIMITS.dia.high,
   temp: t => t != null && (t < LIMITS.temp.low || t >= LIMITS.temp.high),
-  urine: g => (urineGrade(g) ?? 0) >= LIMITS.urineAlertGrade,
+  urine: g => graded(g) && urineGrade(g) >= LIMITS.urineAlertGrade,  // not assessed is never an alert, nor negative
   supportive: (key, val) => (key === 'posture' ? isSupine(val) : val === 'N'),
   bloodLoss: ml => ml != null && ml >= LIMITS.pph.volume,
   newbornTemp: t => t != null && (t < LIMITS.newbornTemp.low || t >= LIMITS.newbornTemp.high),
@@ -109,7 +126,7 @@ export const FLAG = {
 function liquorRule(v) {
   if (v.liquor === 'M3') {
     return [A('liquor_thick_mec', 'danger', 'Thick meconium-stained amniotic fluid (M+++)',
-      [SENIOR, 'Monitor FHR every 15 min', 'Prepare newborn resuscitation equipment', 'Consider referral if combined with abnormal FHR or slow progress'])];
+      [SENIOR, `Monitor FHR every ${LIMITS.fhrCloseMin} min`, 'Prepare newborn resuscitation equipment', 'Consider referral if combined with abnormal FHR or slow progress'])];
   }
   if (v.liquor === 'B') {
     return [A('liquor_blood', 'danger', 'Blood-stained amniotic fluid',
@@ -201,11 +218,17 @@ export const AMTSL_STEPS = [
   ['tone', 'Uterine tone checked by abdominal palpation after the placenta'],
 ];
 
-function inPPHWindow(p, at) {
+// The mother's entries re-check the PPH trigger after the birth (N3): a
+// blood-loss reading, a postpartum mother check, a pulse or a BP can complete
+// it. A baby check never does: it would join the PPH alert and count as one
+// more sighting of a haemorrhage it says nothing about.
+const PPH_ENTRY_TYPES = ['bloodloss', 'ppMother', 'pulse', 'vitals'];
+
+/** Whether entry o is one of the mother's entries made in the 24 h after birth (an entry at the birth itself was made in labour). */
+function inPPHWindow(p, o) {
   const t = birthTime(p);
-  if (!t) return false;
-  const h = hoursBetween(t, at);
-  return h >= 0 && h <= LIMITS.pph.windowHours;
+  if (!t || !PPH_ENTRY_TYPES.includes(o.type) || !afterBirthEntry(o, t)) return false;
+  return hoursBetween(t, o.time) <= LIMITS.pph.windowHours;
 }
 
 /**
@@ -225,7 +248,12 @@ export function bloodLossTotal(p, at) {
   return total;
 }
 
-/** Abnormal haemodynamic signs (PPH 2025) from the latest pulse and BP taken after birth, up to `at`. */
+/**
+ * Abnormal haemodynamic signs (PPH 2025) from the latest pulse and BP taken
+ * after birth, up to `at`; a labour pulse or BP at the birth itself is not one
+ * (afterBirthEntry). The shock index shows two decimals: 125/120 is 1.04, never
+ * a "1.0" beside "above 1".
+ */
 export function haemodynamicSigns(p, at) {
   const birth = birthTime(p);
   if (!birth) return [];
@@ -236,7 +264,7 @@ export function haemodynamicSigns(p, at) {
   if (pv && pv.sys != null) { sys = pv.sys; dia = pv.dia ?? null; bpT = from; }
   for (const o of activeObs(p)) {
     const t = toMs(o.time);
-    if (t < from || t > to || !o.v) continue;
+    if (!afterBirthEntry(o, birth) || t > to || !o.v) continue;
     if ((o.type === 'pulse' || o.type === 'ppMother') && o.v.pulse != null && t >= pulseT) { pulse = o.v.pulse; pulseT = t; }
     if ((o.type === 'vitals' || o.type === 'ppMother') && o.v.sys != null && t >= bpT) { sys = o.v.sys; dia = o.v.dia ?? null; bpT = t; }
   }
@@ -245,7 +273,7 @@ export function haemodynamicSigns(p, at) {
   if (pulse != null && pulse > S.pulseAbove) out.push(`pulse ${pulse}`);
   if (sys != null && sys < S.sbpBelow) out.push(`systolic ${sys}`);
   if (dia != null && dia < S.dbpBelow) out.push(`diastolic ${dia}`);
-  if (pulse != null && sys > 0 && pulse / sys > S.shockIndexAbove) out.push(`shock index ${(pulse / sys).toFixed(1)}`);
+  if (pulse != null && sys > 0 && pulse / sys > S.shockIndexAbove) out.push(`shock index ${(pulse / sys).toFixed(2)}`);
   return out;
 }
 
@@ -289,6 +317,54 @@ function pphDrafts(p, at) {
   if (lastClosed && !moreEvidence({ totalMl: t.totalMl, signs: signKinds(t.signs) }, lastClosed.meta)) return [];
   const { title, meta } = pphSummary(t);
   return [{ ...A('pph', 'danger', title, PPH_ACTIONS), meta }];
+}
+
+/**
+ * The times the PPH trigger is judged at from `from` on: `from` itself, then
+ * each of the mother's entries in the 24 h after birth (inPPHWindow) timed
+ * after it, oldest first.
+ */
+function pphTimes(p, from) {
+  const ms = toMs(from);
+  const later = activeObs(p).filter(x => toMs(x.time) > ms && inPPHWindow(p, x)).sort(byTime).map(x => x.time);
+  return [from, ...new Set(later)];
+}
+
+/**
+ * The PPH trigger judged from `from` on: at `from` itself and as the case
+ * stood at each of the mother's later entries (pphTimes). One draft at most,
+ * so nothing is raised twice: it carries the figures of the latest time the
+ * trigger is met (an open alert never falls back to an older, lower total,
+ * which would also lower the bar a closed episode sets) and, as `at`, the
+ * first - the alert is stamped with the time the trigger was met (S12).
+ */
+function pphFrom(p, from) {
+  let first = null, last = null;
+  for (const t of pphTimes(p, from)) {
+    const [d] = pphDrafts(p, t);
+    if (!d) continue;
+    first = first || t;
+    last = d;
+  }
+  return last ? [{ ...last, at: first }] : [];
+}
+
+/**
+ * The PPH check of one of the mother's entries. The 2025 trigger is
+ * cumulative (300 mL with an abnormal sign, or 500 mL), so a reading entered
+ * late completes it with the entries made after its own time: a drape reading
+ * back-timed before a pulse of 112 meets it at that pulse. Judged from the
+ * entry's own time on (pphFrom).
+ */
+function pphCheck(p, o) {
+  return inPPHWindow(p, o) ? pphFrom(p, o.time) : [];
+}
+
+/** The trigger as the case stands, judged cumulatively: at the last time since the birth it is met (pphTimes), or null. */
+function pphMet(p) {
+  const birth = birthTime(p);
+  if (!birth) return null;
+  return pphTimes(p, birth).map(t => pphTrigger(p, t)).filter(Boolean).pop() || null;
 }
 
 // --------------------------------------------------- observation rules ----
@@ -476,18 +552,22 @@ const OBS_RULES = {
 
 /**
  * Evaluate one observation; returns alert drafts (not stored). obs = {type,
- * time, v}. Any entry within 24 h of birth also re-checks the PPH trigger,
- * because a new blood-loss reading or a new pulse/BP can complete it. The
+ * time, v}. The mother's entries within 24 h of birth also re-check the PPH
+ * trigger, because a new blood-loss reading or a new pulse/BP can complete it;
+ * a baby check does not (PPH_ENTRY_TYPES). The
  * contraction and exam rules read the stage and the earlier exams of the case
  * they are given: record.js (judge) gives them the case as it stood at the
- * entry's own time, for a new entry and for an entry judged again alike.
+ * entry's own time, for a new entry and for an entry judged again alike. The
+ * PPH trigger is cumulative, so it reads `full`, the whole case (default: the
+ * case given), at the entry's own time and at the mother's entries after it
+ * (pphCheck); its draft carries `at`, the time the trigger was met.
  */
-export function evaluateObs(patient, obs, settings) {
+export function evaluateObs(patient, obs, settings, full = patient) {
   const proto = getProtocol(settings, patient);
   const rule = OBS_RULES[obs.type];
   const v = Object.assign({}, obs.v, { _time: obs.time });
   const drafts = rule ? rule(v, patient, proto) || [] : [];
-  if (inPPHWindow(patient, obs.time)) drafts.push(...pphDrafts(patient, obs.time));
+  drafts.push(...pphCheck(full, obs));
   return drafts;
 }
 
@@ -598,7 +678,14 @@ export function admissionRiskAlerts(p, settings, labelOf = code => code) {
   ])];
 }
 
-/** Alerts raised by the birth record (moved out of the delivery view - S13). */
+/**
+ * Alerts raised by the birth record (moved out of the delivery view - S13).
+ * Its PPH trigger is judged from the birth on, as an entry's is (pphFrom): a
+ * birth recorded late meets it with the mother's entries already made after
+ * the birth - its estimate with a pulse taken after the birth but entered
+ * before the birth was on the tablet - and the alert is stamped when the
+ * trigger was met.
+ */
 export function birthAlerts(p) {
   const d = p.delivery;
   if (!d) return [];
@@ -616,7 +703,7 @@ export function birthAlerts(p) {
     out.push(A('stillbirth', 'warn', 'Stillbirth — respectful supportive care',
       ['Provide compassionate counselling and privacy for the family', 'Complete perinatal death notification per national surveillance', 'Review the labour record for learning (audit), not blame']));
   }
-  return out.concat(pphDrafts(p, d.time));
+  return out.concat(pphFrom(p, d.time));
 }
 
 // ------------------------------------------------------------------------
@@ -641,15 +728,16 @@ function asksAgain(open, d, source, obsId) {
  * acknowledgement, and so does a new entry once it has been acknowledged
  * (asksAgain: stamped reAlertedAt). Otherwise a new alert opens with the next
  * episode number. opts.time is the observation time the alert is stamped
- * with (S12).
+ * with (S12); a draft met at another time than its entry's or the birth's (a
+ * PPH trigger completed by later entries, pphFrom) carries that time as d.at.
  */
 export function addAlerts(patient, drafts, source = 'obs', opts = {}) {
-  const at = opts.time || nowISO();
   const raisedAt = opts.raisedAt || nowISO();
   const obsId = opts.obsId || null;
   patient.alerts = patient.alerts || [];
   const added = [];
   for (const d of drafts) {
+    const at = d.at || opts.time || nowISO();
     const open = patient.alerts.find(a => a.code === d.code && !a.resolved);
     if (open) {
       const again = asksAgain(open, d, source, obsId); // before meta is updated below
@@ -692,9 +780,17 @@ function markResolved(a, at, how, by = null, obsId = null) {
   return a;
 }
 
+/**
+ * Open a closed alert again. Open, it is shown, so it asks for acknowledgement
+ * like any open alert: an alert closed in the save that raised it (needsAck
+ * false, record.js settle) loses that mark - else the strip, the dialog and
+ * the Acknowledge button would skip an open alert and the chart grey its value.
+ * An acknowledgement given before still stands.
+ */
 function reopen(a) {
   a.resolved = false;
   delete a.resolvedAt; delete a.resolvedHow; delete a.resolvedBy; delete a.resolvedByObs;
+  delete a.needsAck;
   return a;
 }
 
@@ -704,15 +800,18 @@ const TEMP = ['fever', 'temp_high', 'temp_low'];
 const MOULD = ['moulding2', 'moulding3'];
 const LINES = ['alert_line', 'action_line'];
 const pp = list => list.map(c => 'pp_' + c);
-const R = (types, fields, family) => ({ types, fields, family });
+const recorded = x => x != null && x !== '';
+const R = (types, fields, family, reads = recorded) => ({ types, fields, family, reads });
 
 /**
  * Evidence that clears an open alert: a LATER, non-voided observation of one
- * of `types` that carries every one of `fields` and did not itself raise any
- * code of the family. Codes not listed never auto-resolve and close only by
- * hand: time rules (they clear on the tick), manual and emergency alerts,
- * birth and admission alerts, PPH, and findings whose meaning lasts until
- * birth - thick meconium and blood-stained fluid.
+ * of `types` that carries every one of `fields` as a reading the midwife made
+ * (readsAll) and did not itself raise any code of the family. Codes not
+ * listed never auto-resolve and close only by hand: time rules (they clear on
+ * the tick), manual and emergency alerts, birth and admission alerts, PPH,
+ * and findings whose meaning lasts until birth - thick meconium and
+ * blood-stained fluid. `reads` tests a field's value (default: recorded); a
+ * urine value the app cannot grade is not assessed (urineGrade).
  */
 export const RESOLVE_ON = Object.freeze({
   fhr_abn: R(['baby'], ['fhr'], FHR),
@@ -730,8 +829,8 @@ export const RESOLVE_ON = Object.freeze({
   fever: R(['vitals'], ['temp'], TEMP),
   temp_high: R(['vitals'], ['temp'], TEMP),
   temp_low: R(['vitals'], ['temp'], TEMP),
-  proteinuria: R(['vitals'], ['protein'], ['proteinuria']),
-  ketonuria: R(['vitals'], ['acetone'], ['ketonuria']),
+  proteinuria: R(['vitals'], ['protein'], ['proteinuria'], graded),
+  ketonuria: R(['vitals'], ['acetone'], ['ketonuria'], graded),
   moulding2: R(['exam'], ['moulding'], MOULD),
   moulding3: R(['exam'], ['moulding'], MOULD),
   caput3: R(['exam'], ['caput'], ['caput3']),
@@ -766,6 +865,36 @@ function flagsOf(p, o, settings) {
 }
 
 /**
+ * Whether entry o carries every field of the rule as a reading the midwife
+ * made: a value the rule can read, and not a step default committed untouched
+ * (o.defaulted, wizard.js computeDefaulted) - tapping Next through the
+ * deceleration step is no finding of "no decelerations", so a defaulted
+ * 'none' never clears late decelerations, nor a defaulted moulding 0 or
+ * companion Y their alerts. The same value touched is evidence.
+ */
+function readsAll(rule, o) {
+  const untouched = o.defaulted || [];
+  return !!o.v && rule.fields.every(f => rule.reads(o.v[f]) && !untouched.includes(f));
+}
+
+/**
+ * The fields the open alerts wait on for evidence (RESOLVE_ON), by entry
+ * type: {type: [fields]}, e.g. {baby: ['decel']} while late decelerations
+ * are open. A step default is never evidence (readsAll), so the wizard
+ * preselects no answer for these fields (wizard.js sessionSteps): the midwife
+ * answers them on purpose. Pure.
+ */
+export function fieldsAwaitingEvidence(p) {
+  const out = {};
+  for (const a of (p && p.alerts) || []) {
+    if (!a || a.resolved || !Object.prototype.hasOwnProperty.call(RESOLVE_ON, a.code)) continue;
+    const rule = RESOLVE_ON[a.code];
+    for (const type of rule.types) out[type] = [...new Set([...(out[type] || []), ...rule.fields])];
+  }
+  return out;
+}
+
+/**
  * Resolve every open alert whose evidence rule is met by a later entry.
  * Idempotent and order-independent, so batches and back-timed entries behave
  * the same. Returns the alerts it resolved.
@@ -777,8 +906,7 @@ export function reconcileAlerts(p, settings) {
     const rule = RESOLVE_ON[a.code];
     if (a.resolved || !rule) continue;
     const since = toMs(a.lastSeen || a.time);
-    const ev = obs.find(o => rule.types.includes(o.type) && toMs(o.time) > since
-      && rule.fields.every(f => o.v && o.v[f] != null && o.v[f] !== '')
+    const ev = obs.find(o => rule.types.includes(o.type) && toMs(o.time) > since && readsAll(rule, o)
       && !flagsOf(p, o, settings).some(c => rule.family.includes(c)));
     if (ev) resolved.push(markResolved(a, ev.time, 'evidence', null, ev.id));
   }
@@ -838,9 +966,11 @@ export function unlinkObservation(p, obsId, at, by = null) {
     if (!a.resolved && a.code === 'pph') {
       // An aggregate trigger is decided on the readings that remain, whether or
       // not the voided one was linked (the volume reading recorded before the
-      // completing sign never is). Still met: show the remaining figures, so a
-      // later closure does not keep a voided total as its re-open bar.
-      const t = pphTrigger(p);
+      // completing sign never is), and cumulatively (pphMet): met at any time
+      // since the birth, it stands though the latest pulse is normal again.
+      // Still met: show the remaining figures, so a later closure does not
+      // keep a voided total as its re-open bar.
+      const t = pphMet(p);
       if (t) Object.assign(a, pphSummary(t));
       else if (a.source === 'obs') resolved.push(markResolved(a, at, 'void', by));
     } else if (linked && !a.resolved && a.source === 'obs' && !a.obsIds.length) {
@@ -853,8 +983,10 @@ export function unlinkObservation(p, obsId, at, by = null) {
 
 /**
  * Findings about the labour itself - the baby in utero, progress, supportive
- * care - close at birth. Maternal findings (pulse, BP, temperature, urine)
- * stay open into the postpartum watch.
+ * care - close when labour monitoring ends on this device: at the birth, or at
+ * her departure on referral (record.js applyBirth and recordEvent 'handover').
+ * Maternal findings (pulse, BP, temperature, urine) stay open into the
+ * postpartum watch.
  */
 export const LABOUR_ONLY = [
   'fhr_abn', 'fhr_severe', 'decel', 'liquor_mec', 'liquor_thick_mec', 'liquor_blood',

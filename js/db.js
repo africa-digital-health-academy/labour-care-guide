@@ -5,6 +5,7 @@
 
 import { planRestore } from './migrate.js';
 import { toast } from './ui.js';
+import { t } from './i18n.js';
 
 const DB_NAME = 'labour-care-guide';
 const DB_VERSION = 2;
@@ -33,7 +34,7 @@ function openDB() {
       resolve(db);
     };
     req.onerror = () => reject(req.error);
-    req.onblocked = () => toast('Close this app in other open tabs to finish updating.', 'danger');
+    req.onblocked = () => toast(t('db_blocked'), 'danger');
   });
   return dbPromise;
 }

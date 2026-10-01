@@ -10,9 +10,15 @@
 //    ward board is never swapped under her hands.
 //  * Everything else same-origin stays stale-while-revalidate. Cross-origin
 //    requests go straight to the network.
+//  * The origin may be shared with other apps (every GitHub Pages site of one
+//    account is one origin, and Cache Storage is per origin): this worker
+//    deletes only its own old caches (prefix 'lcg-'), and if another app's
+//    worker deleted ours, the whole shell is fetched again in one
+//    all-or-nothing step, never file by file.
 importScripts('./js/version.js');
 
-const CACHE_VERSION = 'lcg-' + self.LCG_VERSION;
+const CACHE_PREFIX = 'lcg-';
+const CACHE_VERSION = CACHE_PREFIX + self.LCG_VERSION;
 
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
@@ -30,18 +36,21 @@ const SHELL = [
 ];
 const SHELL_URLS = new Set(SHELL.map(u => new URL(u, self.location.href).href));
 
+// cache: 'reload' bypasses the HTTP cache so a release is fetched fresh, and
+// addAll is all-or-nothing, so a half-downloaded shell is never used.
+const fillShell = () => caches.open(CACHE_VERSION)
+  .then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' }))));
+let refilling = null; // one shared refill when another app wiped our cache
+
 self.addEventListener('install', e => {
-  // cache: 'reload' bypasses the HTTP cache so a release is fetched fresh, and
-  // addAll is all-or-nothing, so a half-downloaded shell never activates.
-  e.waitUntil(
-    caches.open(CACHE_VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))),
-  );
+  e.waitUntil(fillShell());
 });
 
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE_VERSION).map(k => caches.delete(k))))
+      // only our own old releases: other apps on this origin keep their caches
+      .then(keys => Promise.all(keys.filter(k => k.startsWith(CACHE_PREFIX) && k !== CACHE_VERSION).map(k => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -63,14 +72,19 @@ self.addEventListener('fetch', e => {
 
     if (isShell) {
       const key = isNav ? './index.html' : url.href;
-      const cached = await cache.match(key);
-      if (cached) return cached;
+      let hit = await cache.match(key);
+      if (!hit) {
+        // our shell is gone (another app's worker on this origin deleted it):
+        // fetch the whole shell again in one step so files never mix
+        refilling = refilling || fillShell().finally(() => { refilling = null; });
+        await refilling.catch(() => {});
+        hit = await cache.match(key);
+      }
+      if (hit) return hit;
       try {
-        const res = await fetch(e.request);
-        if (res && res.ok) cache.put(key, res.clone());
-        return res;
+        return await fetch(e.request);
       } catch {
-        return (await cache.match('./index.html')) || Response.error();
+        return Response.error();
       }
     }
 

@@ -71,10 +71,15 @@ export function txt(x, y, s, o = {}) {
 export const ln = (x1, y1, x2, y2, stroke, w = 1, extra = '') =>
   `<line x1="${n1(x1)}" y1="${n1(y1)}" x2="${n1(x2)}" y2="${n1(y2)}" stroke="${stroke}" stroke-width="${w}"${extra}/>`;
 
-/** A dipstick grade as written on the chart: '-' negative, 'tr' trace, else the grade. */
+/**
+ * A dipstick grade as written on the chart: '-' negative, 'tr' trace, '+'
+ * to '++++' (whatever notation was stored: '++', 'P++', '2+'), '?' when it
+ * cannot be graded (shown, never read as negative). The caller adds P or A.
+ */
 export const urineText = g => {
   const n = urineGrade(g);
-  return n === 0 ? '-' : n === 0.5 ? 'tr' : String(g);
+  if (n == null) return '?';
+  return n === 0 ? '-' : n === 0.5 ? 'tr' : '+'.repeat(Math.round(n));
 };
 
 // ------------------------------------------------ circles and acknowledgement ----
@@ -122,9 +127,12 @@ export function flagState(idx, o, fields) {
   // is re-opened, the entry must also predate the re-opening (a tablet clock
   // set back must never grey a value nobody has acknowledged). An older entry
   // judged again after a stage move (record.js restage) can re-open an alert
-  // acknowledged before it was made: it stays red.
-  const covered = a => !!a.actionTime && toMs(a.actionTime) >= made
-    && (a.ack || made < toMs(a.reAlertedAt || a.escalatedAt || 0));
+  // acknowledged before it was made: it stays red. An alert closed in the
+  // same save that raised it (an entry corrected after the birth or her
+  // departure) asks for nothing (needsAck false), so its value is drawn as
+  // handled, never as a red circle no one can ever acknowledge.
+  const covered = a => a.needsAck === false || (!!a.actionTime && toMs(a.actionTime) >= made
+    && (a.ack || made < toMs(a.reAlertedAt || a.escalatedAt || 0)));
   return raised.length && raised.every(covered) ? 'ack' : 'open';
 }
 
@@ -228,6 +236,7 @@ export const PARTO_LEGEND = `X dilatation (cm) · O descent (fifths above brim) 
     I/C/M/B amniotic fluid · E/V/L early-variable-late decelerations ·
     orange ALERT and red ACTION lines per Ethiopian modified WHO partograph ·
     supportive care: ✓ ok, C no companion, PR no pain relief, F no fluids, SP supine; P pushing began;
+    urine P protein, A acetone (tr trace, ? not gradable);
     circled values meet an alert criterion: solid red until the alert is acknowledged, dashed grey = acknowledged;
     an FHR beyond the scale sits on its edge with an arrow and its value`;
 
@@ -432,7 +441,15 @@ function partoMother(c) {
       s += `<path d="M${cx - 4},${c.bpY(o.v.dia) - 4} L${cx},${c.bpY(o.v.dia)} L${cx + 4},${c.bpY(o.v.dia) - 4}" fill="none" stroke="${col}" stroke-width="1.5"/>`;
     }
     if (o.v.temp != null) s += partoCode(c, 'temp', o, 'temp', Number(o.v.temp).toFixed(1), FLAG.temp(o.v.temp));
-    const graded = key => (urineGrade(o.v[key]) > 0 ? (key === 'protein' ? 'P' : 'A') + urineText(o.v[key]) : '');
+    // a positive grade, or a value that cannot be graded, written as the LCG
+    // chart writes it (urineText: 'P++', 'A?'): not assessed is shown, never
+    // dropped under a tick; a negative is not written (urine passed: a tick)
+    const graded = key => {
+      const v = o.v[key];
+      if (v == null || v === '') return '';
+      const g = urineGrade(v);
+      return g == null || g > 0 ? (key === 'protein' ? 'P' : 'A') + urineText(v) : '';
+    };
     const ur = [graded('protein'), graded('acetone')].filter(Boolean).join(' ');
     if (ur || o.v.urineVoided) s += partoCode(c, 'urine', o, ['protein', 'acetone'], ur || '✓', FLAG.urine(o.v.protein) || FLAG.urine(o.v.acetone));
   }

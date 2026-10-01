@@ -156,7 +156,11 @@ function promptedAt(a) {
 }
 
 function alertHandling(p, b) {
-  const raised = (p.alerts || []).filter(a => a.severity !== 'info' && toMs(a.time) >= b.start && toMs(a.time) <= b.end);
+  // an alert closed in the same save that raised it (an entry corrected or
+  // back-timed after the birth or departure) was never shown and asks for
+  // nothing (needsAck false): it is not an alert the midwife could handle
+  const raised = (p.alerts || []).filter(a => a.severity !== 'info' && a.needsAck !== false
+    && toMs(a.time) >= b.start && toMs(a.time) <= b.end);
   const acked = raised.filter(a => a.ack);
   const inTime = acked.filter(a => a.actionTime
     && toMs(a.actionTime) - promptedAt(a) <= LIMITS.audit.ackWithinMin * MIN);
@@ -175,7 +179,8 @@ function alertHandling(p, b) {
 export function auditCase(p, proto, now = new Date()) {
   const b = bounds(p, now);
   const tool = proto.id === 'lcg' ? 'lcg' : 'partograph';
-  const voided = (p.obs || []).filter(o => o.voided).length;
+  // every voided entry: observations, medication and notes (all can be voided since M6)
+  const voided = [p.obs, p.meds, p.notes].reduce((n, list) => n + (list || []).filter(e => e && e.voided).length, 0);
   if (b.start == null) {
     return { applicable: false, tool, startedAt: null, score: null, completed: false, voided };
   }
@@ -227,8 +232,10 @@ export function auditCase(p, proto, now = new Date()) {
     activeMin: b.active ? Math.round((b.active.to - b.active.from) / MIN) : null,
     secondMin: b.second ? Math.round((b.second.to - b.second.from) / MIN) : null,
   };
-  durations.activeOver12h = durations.activeMin != null && durations.activeMin >= 12 * 60;
-  durations.secondOver3h = durations.secondMin != null && durations.secondMin >= 3 * 60;
+  // Annex 8 stage lengths (LIMITS.audit.stageLongHours: 12 h and 3 h, which the flag names carry)
+  const long = LIMITS.audit.stageLongHours;
+  durations.activeOver12h = durations.activeMin != null && durations.activeMin >= long.active * 60;
+  durations.secondOver3h = durations.secondMin != null && durations.secondMin >= long.second * 60;
 
   // Operational definition for the "LCG use" indicator (IRP Table 3),
   // PANEL-TO-CONFIRM: an LCG case with name and parity recorded and at least
