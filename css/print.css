@@ -1,0 +1,100 @@
+/* print.css - paper copies (M4). Linked from index.html with media="print",
+   so nothing here touches the screen.
+
+   The chart tab prints every LCG sheet (F6), each on its own A4 landscape
+   page with a header naming the woman: the hidden .print-sheets container
+   that js/chart.js renderPrintSheets() builds and refreshes just before
+   printing, followed by an appendix with the notes and medication in full.
+   The landscape size is a named page used only by the sheets, so the
+   appendix, the referral note and the case summary print in portrait. */
+
+@page lcg-sheet {
+  size: A4 landscape;
+  margin: 8mm;
+}
+
+/* app chrome never prints: top bar, bottom nav, buttons, tabs, alert strip */
+.topbar, .bottom-nav, .fab, .tabs, .chart-tools, [data-live="alert-strip"],
+#toast-root, #modal-root, button, .btn {
+  display: none !important;
+}
+
+/* chart containers: nothing clipped or scrolled away on paper */
+.chart-scroll, .chart-inner, .print-sheets, .print-sheet {
+  overflow: visible !important;
+}
+.chart-scroll { box-shadow: none !important; border: 0 !important; }
+.chart-gutter { display: none !important; }
+
+/* on the chart tab only the sheets print: the on-screen chart, its tools
+   and the case header card give way to the sheets and their own headers */
+.chart-tab > :not(.print-sheets) { display: none !important; }
+.page:has(.chart-tab) > :not(:has(.chart-tab)) { display: none !important; }
+/* the same without :has() (older browsers): while the chart tab prints,
+   js/chart.js marks <body> and every ancestor of the sheets (.print-path) */
+body.print-sheets-only > :not(.print-path),
+body.print-sheets-only .print-path > :not(.print-path):not(.print-sheets) { display: none !important; }
+.print-sheets { display: block !important; }
+
+.print-sheet {
+  page: lcg-sheet;
+  break-after: page;
+  page-break-after: always;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.print-sheet:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+/* the sheet header: name, MRN, admission date, protocol, facility */
+.print-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1mm 5mm;
+  margin: 0 0 2mm;
+  padding-bottom: 1.5mm;
+  border-bottom: 0.4mm solid #333;
+  font: 9pt/1.3 "Segoe UI", Arial, sans-serif;
+  color: #000;
+}
+.print-head strong { font-size: 11pt; margin-right: 3mm; }
+.print-head b { font-weight: 600; color: #444; }
+
+/* the sheet fills the page width and never runs onto a second page */
+.print-sheet svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 168mm;
+}
+
+.print-legend {
+  margin: 1.5mm 0 0;
+  font: 6.5pt/1.3 "Segoe UI", Arial, sans-serif;
+  color: #333;
+}
+
+/* the appendix after the last sheet: every note and medication entry in
+   full, because the sheet cuts long text; a portrait page of its own */
+.print-notes {
+  break-before: page;
+  page-break-before: always;
+  font: 8pt/1.35 "Segoe UI", Arial, sans-serif;
+  color: #000;
+}
+.print-notes h3 { font-size: 9.5pt; margin: 3mm 0 1.5mm; }
+.print-notes table { width: 100%; border-collapse: collapse; }
+.print-notes th, .print-notes td {
+  border: 0.2mm solid #999;
+  padding: 0.8mm 1.5mm;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.print-notes th { background: #eee; font-weight: 600; }
+.print-notes tr { break-inside: avoid; page-break-inside: avoid; }

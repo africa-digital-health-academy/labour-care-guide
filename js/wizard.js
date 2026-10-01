@@ -399,7 +399,8 @@ function showTimeScreen(w) {
   const birth = birthTime(w.patient);
   const choices = timeChoices(birth);
   if (!choices.some(c => c.value === w.offsetMin)) w.offsetMin = 0;
-  w.body.append(
+  // the DOM's append() writes a null child as the text "null": leave it out
+  w.body.append(...[
     h('h2', null, w.opts.title || t('record_now')),
     h('p', { class: 'wizard-q' }, 'When were these observations made?'),
     segmented(choices, w.offsetMin, v => { w.offsetMin = v; }, { big: true }),
@@ -418,7 +419,7 @@ function showTimeScreen(w) {
         },
       }, t('next')),
     ),
-  );
+  ].filter(Boolean));
 }
 
 function control(step, value, onChange, patient) {

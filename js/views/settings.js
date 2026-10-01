@@ -46,7 +46,7 @@ export function renderSettings() {
           ? PROTOCOLS.lcg.name + ': active phase from 5 cm; per-centimetre time limits (5 cm 6 h, 6 cm 5 h, 7 cm 3 h, 8 cm 2.5 h, 9 cm 2 h) replace the alert/action lines.'
           : PROTOCOLS.ethiopia2021.name + ': active phase from 4 cm; alert line 1 cm/h with action line 4 h to the right, per the MOH Obstetrics Management Protocol for Health Centers (2021). Kept for facilities still audited on it.'),
       h('p', { class: 'muted' },
-        'Use the standard your facility is audited against. Note: in this version, changing the standard applies to every case on this device; per-case protocol arrives in the next release.'),
+        'Use the standard your facility is audited against. A change applies to new admissions only: every case keeps the standard it was admitted under.'),
     ),
     h('div', { class: 'card' },
       h('h2', null, '🌐 Display'),

@@ -87,6 +87,22 @@ test('alert handling: acknowledged with an action within 15 minutes is timely', 
   assert.ok(a.score < 100);
 });
 
+test('alert timeliness runs from the latest prompt: raised again by a new entry, or severity raised', () => {
+  const p = lcgCase();
+  p.alerts = [
+    // raised at 60, acknowledged, raised again at 120 and acknowledged at 125: timely
+    { code: 'fhr_abn', severity: 'warn', time: at(60), raisedAt: at(60), reAlertedAt: at(120), ack: true, actionTime: at(125), action: 'monitoring' },
+    // severity raised at 100, acknowledged at 110: timely although 50 min after it was first raised
+    { code: 'htn', severity: 'danger', time: at(60), raisedAt: at(60), escalatedAt: at(100), ack: true, actionTime: at(110), action: 'senior' },
+    // severity raised at 100, raised again at 150, acknowledged at 180: 30 min after the latest prompt
+    { code: 'pulse_abn', severity: 'danger', time: at(60), raisedAt: at(60), escalatedAt: at(100), reAlertedAt: at(150), ack: true, actionTime: at(180), action: 'senior' },
+    // raised again at 200 and not acknowledged since: raised, not acknowledged
+    { code: 'supine', severity: 'warn', time: at(90), raisedAt: at(90), reAlertedAt: at(200), ack: false, actionTime: at(95), action: 'monitoring' },
+  ];
+  const a = auditCase(p, PROTOCOLS.lcg, NOW);
+  assert.deepEqual([a.alerts.raised, a.alerts.acknowledged, a.alerts.ackedInTime], [4, 3, 2]);
+});
+
 test('oxytocin records are audited hourly while the infusion runs', () => {
   const p = lcgCase({ extra: { meds: [{ id: 'ox', kind: 'oxytocin', time: at(0), action: 'start', by: 'TE' }] } });
   p.obs.push({ id: 'ox-60', type: 'oxytocin', time: at(60), v: { dropsMin: 20 }, by: 'TE', flags: [] });

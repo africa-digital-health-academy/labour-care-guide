@@ -31,7 +31,9 @@ import { isDemo } from '../indicators.js';
 import {
   openRecordWizard, openMedicationModal, showAlertAckModal, WIZARD_TYPES, wizardTypeFor,
 } from '../wizard.js';
-import { renderChart } from '../chart.js';
+import {
+  renderChart, renderPrintSheets, chartLegend, sheetCount, chartSheet, selectChartSheet, SHEET_HOURS,
+} from '../chart.js';
 import { renderReferralTab } from './referral.js';
 import { renderDeliveryTab } from './delivery.js';
 import { downloadFHIR } from '../fhir.js';
@@ -64,19 +66,54 @@ export function renderPatient(id, tab = 'chart') {
 
   const body = h('div');
   page.append(body);
-  if (current === 'chart') {
-    body.append(
-      // the live part holds exactly renderChart(p, S.settings), nothing else
-      h('div', { 'data-live': 'chart' }, renderChart(p, S.settings)),
-      h('p', { class: 'muted', style: 'margin-top:8px' },
-        'The chart is drawn automatically from wizard entries. Scroll horizontally for the full timeline.'),
-    );
-  } else if (current === 'entries') body.append(entriesTab(p));
+  if (current === 'chart') body.append(chartTab(p, now));
+  else if (current === 'entries') body.append(entriesTab(p));
   else if (current === 'alerts') body.append(alertsTab(p));
   else if (current === 'summary') body.append(summaryTab(p, now));
   else if (current === 'referral') body.append(renderReferralTab(p));
   else if (current === 'delivery') body.append(renderDeliveryTab(p));
   return page;
+}
+
+// ----------------------------------------------------------- chart tab ----
+
+/**
+ * The chart tab (M4): a sheet picker once the active first stage runs past
+ * 12 hours (F6), "Print chart", the live chart and, for paper only, every
+ * sheet with its header (css/print.css). The data-live part holds exactly
+ * renderChart(p, S.settings): app.js swaps it on the heartbeat and
+ * renderChart keeps the sheet picked here.
+ */
+function chartTab(p, now) {
+  const n = sheetCount(p, now, S.settings);
+  const live = h('div', { 'data-live': 'chart' }, renderChart(p, S.settings));
+  const buttons = [];
+  const pick = sheet => {
+    selectChartSheet(p, sheet, new Date(), S.settings);
+    buttons.forEach((b, i) => b.classList.toggle('sel', i + 1 === sheet));
+    live.replaceChildren(renderChart(p, S.settings));
+  };
+  const shown = chartSheet(p, now, S.settings);
+  for (let s = 1; n > 1 && s <= n; s++) {
+    buttons.push(h('button', { type: 'button', class: s === shown ? 'sel' : '', onclick: () => pick(s) },
+      `Sheet ${s}: ${(s - 1) * SHEET_HOURS}-${s * SHEET_HOURS} h`));
+  }
+  const lcg = !getProtocol(S.settings, p).alertActionLines;
+  return h('div', { class: 'chart-tab' },
+    h('div', { class: 'chart-tools no-print', style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px' },
+      buttons.length ? h('div', { class: 'seg', role: 'group', 'aria-label': 'LCG sheets' }, buttons) : null,
+      h('button', { class: 'btn secondary', type: 'button', onclick: () => window.print() }, 'Print chart'),
+    ),
+    live,
+    h('p', { class: 'chart-legend no-print', style: 'margin:0' }, chartLegend(p, S.settings)),
+    h('p', { class: 'muted no-print', style: 'margin-top:4px' }, lcg
+      ? 'Drawn from the entries like the WHO sheet: a value meeting the ALERT column is circled, solid red until its alert'
+        + ` is acknowledged, then dashed grey. Each sheet covers ${SHEET_HOURS} hours of the active first stage.`
+        + ' Scroll sideways for the full timeline.'
+      : 'Drawn from the entries: Ethiopian modified WHO partograph with its alert and action lines.'
+        + ' Scroll sideways for the full timeline.'),
+    renderPrintSheets(p, S.settings),
+  );
 }
 
 // ------------------------------------------------------------- helpers ----
@@ -814,6 +851,29 @@ function noteForm(p) {
   return form;
 }
 
+/**
+ * The rule behind "Close case": never while she is in labour (or referred in
+ * labour with no handover recorded), and never twice. Closing during the
+ * postpartum watch is allowed: the dialog warns that its checks stop.
+ */
+export function canClose(p) {
+  return !isLabouring(p) && stageOf(p) !== 'closed';
+}
+
+/**
+ * The fields closing writes: status, time and initials (F3). Refuses a case
+ * canClose rejects and a close without initials. Pure: it returns new fields
+ * and never changes p; the caller applies them.
+ */
+export function closeFields(p, by, at) {
+  if (!canClose(p)) {
+    throw new Error(stageOf(p) === 'closed' ? 'The case is already closed'
+      : 'A case in labour cannot be closed - record the birth or the handover first');
+  }
+  if (!String(by || '').trim()) throw new Error('Initials are required to close a case');
+  return { status: 'closed', closedAt: at, closedBy: by };
+}
+
 /** Close the case with initials (F3): it leaves the active list; the record stays. */
 async function closeCase(p) {
   const watching = inPostpartumWatch(p, new Date());
@@ -824,10 +884,10 @@ async function closeCase(p) {
     by: getBy(), okLabel: 'Close case',
   });
   if (!r) return;
+  // closeFields re-checks canClose at the write: a page drawn before the case
+  // changed cannot close it, and commit shows why
   const done = await commit(p, () => {
-    p.status = 'closed';
-    p.closedAt = new Date().toISOString();
-    p.closedBy = r.by;
+    Object.assign(p, closeFields(p, r.by, new Date().toISOString()));
   });
   if (!done) return;
   setBy(r.by);
@@ -841,7 +901,7 @@ function caseActions(p) {
     h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
       h('button', { class: 'btn secondary', onclick: () => downloadFHIR(p, S.settings) }, '⇩ Export FHIR R4 (JSON)'),
       h('button', { class: 'btn secondary', onclick: () => window.print() }, '🖨 Print summary'),
-      !isLabouring(p) && p.status !== 'closed'
+      canClose(p)
         ? h('button', { class: 'btn secondary', onclick: () => closeCase(p) }, 'Close case') : null,
       // S5: only a DEMO case can be deleted; a real case is closed, never deleted
       demo ? h('button', {

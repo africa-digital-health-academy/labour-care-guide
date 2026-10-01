@@ -35,6 +35,33 @@ test('while open, a repeat finding updates the alert instead of stacking a new o
   assert.equal(list[0].obsIds.length, 2);
 });
 
+test('a new abnormal reading re-opens an acknowledged open alert: unacknowledged, in added, stamped reAlertedAt', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(2), { baby: { fhr: 165 } }, LCG, { enteredAt: iso(2) });
+  const a = find(p, 'fhr_abn')[0];
+  Object.assign(a, { ack: true, action: 'monitoring', actionTime: iso(1.9) });
+  const r = applyObservations(p, iso(1.5), { baby: { fhr: 166 } }, LCG, { enteredAt: iso(1.4) });
+  assert.deepEqual(r.added, [a]);
+  assert.equal(a.ack, false);
+  assert.equal(a.reAlertedAt, iso(1.4), 'when the new entry was made');
+  assert.equal(a.actionTime, iso(1.9), 'the last acknowledgement is kept');
+  assert.deepEqual([find(p, 'fhr_abn').length, a.count, a.episode], [1, 2, 1], 'the same alert, not a new episode');
+  // not acknowledged again yet: a further repeat only counts, it is not asked twice
+  const again = applyObservations(p, iso(1), { baby: { fhr: 167 } }, LCG, { enteredAt: iso(0.9) });
+  assert.deepEqual(again.added, []);
+  assert.deepEqual([a.count, a.reAlertedAt], [3, iso(1.4)]);
+});
+
+test('a time rule firing again on an acknowledged alert stays silent', () => {
+  const p = mkPatient({ activeStartTime: iso(6) });
+  p.obs.push({ id: 'e1', type: 'exam', time: iso(5.5), v: { dilatation: 6 }, flags: [] });
+  const [a] = refreshTimeAlerts(p, LCG, NOW).added;
+  Object.assign(a, { ack: true, action: 'monitoring', actionTime: NOW.toISOString() });
+  assert.deepEqual(refreshTimeAlerts(p, LCG, new Date(+NOW + 60000)).added, []);
+  assert.equal(a.ack, true);
+  assert.equal(a.reAlertedAt, undefined);
+});
+
 test('a worse severity of the same code re-opens it for acknowledgement', () => {
   const p = mkPatient();
   applyObservations(p, iso(2), { pulse: { pulse: 125 } }, LCG);
@@ -114,4 +141,14 @@ test('manual and emergency alerts never auto-resolve; the Resolve button closes 
   assert.equal(a.resolvedHow, 'manual');
   assert.equal(a.resolvedBy, 'TE');
   assert.equal(resolveAlert(p, a.id, { by: 'TE' }), null);
+});
+
+test('a re-asked alert shows the new value in its title', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(2), { baby: { fhr: 165 } }, LCG);
+  const a = p.alerts.find(x => x.code === 'fhr_abn');
+  Object.assign(a, { ack: true, action: 'monitoring', actionTime: new Date().toISOString() });
+  const r = applyObservations(p, iso(1), { baby: { fhr: 168 } }, LCG);
+  assert.ok(r.added.includes(a));
+  assert.match(a.title, /168/);
 });

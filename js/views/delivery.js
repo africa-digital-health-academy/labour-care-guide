@@ -8,6 +8,10 @@
 // 2025 two-level trigger and keeps the first-response bundle (N3); the
 // postpartum watch shows its checks as due chips, like labour (N4).
 // Thresholds and schedules come from protocol.js and alerts.js.
+//
+// M4: a birth recorded again after a correction may not be later than a
+// postpartum check still in the entries - the engine counts those checks only
+// from the birth time on, so they would be lost and re-fire as overdue.
 
 import {
   h, segmented, field, toast, byField, promptDialog, confirmDialog, alertBanner,
@@ -17,7 +21,7 @@ import { t } from '../i18n.js';
 import { S, savePatient, getBy, setBy } from '../store.js';
 import {
   LIMITS, POSTPARTUM, getProtocol, dueList, inPostpartumWatch, birthTime, stageOf, hoursBetween,
-  activeObs, byTime, fmtMin,
+  activeObs, byTime, fmtMin, toMs,
 } from '../protocol.js';
 import { AMTSL_STEPS, FLAG, PPH_BUNDLE, pphTrigger, bloodLossTotal, haemodynamicSigns } from '../alerts.js';
 import { applyBirth, applyObservations, voidDelivery } from '../record.js';
@@ -61,6 +65,11 @@ const BIRTH_ANSWERS = [
   ['placentaComplete', 'placenta complete'],
   ['perineum', 'perineum'],
 ];
+
+// Postpartum entries a corrected birth record leaves in the entries. dueList,
+// postpartumBPCount and urinePassedSinceBirth count them only at or after the
+// birth time, so a birth recorded again may not be later than any of them.
+const PP_ENTRY_TYPES = ['ppMother', 'ppBaby', 'bloodloss'];
 
 // Due chips age with the clock, and the app's tick redraws only the header.
 const WATCH_REFRESH_MS = 30000;
@@ -217,7 +226,7 @@ function birthForm(p) {
   async function save() {
     if (saving) return;
     const time = localInputToISO(m.time);
-    const why = birthProblem(m, time, by);
+    const why = birthProblem(m, time, by, p);
     if (why) { toast(why, 'danger'); return; }
     saving = true; // stays set once saved: the tab is redrawn as the birth summary
     let result;
@@ -243,17 +252,39 @@ function birthForm(p) {
 
 /**
  * The first missing or impossible answer on the birth form, or null. The
- * unanswered facts are named together. No DOM: exported for the tests.
+ * unanswered facts are named together. Given the case p, a birth time later
+ * than a postpartum check that survived a corrected birth record is refused
+ * (PP_ENTRY_TYPES). No DOM: exported for the tests.
  */
-export function birthProblem(m, time, by) {
+export function birthProblem(m, time, by, p = null) {
   if (!time) return 'Enter the time of birth';
   if (new Date(time) > new Date()) return 'The time of birth is in the future';
+  const check = p ? firstPostpartumEntry(p) : null;
+  if (check && toMs(time) > toMs(check.time)) {
+    return `Birth time is after a postpartum check recorded at ${checkTime(check.time, time)} - check the time, or void that check in Entries if it was wrong`;
+  }
   const missing = BIRTH_ANSWERS.filter(([key]) => m[key] == null).map(([, label]) => label);
   if (missing.length) return 'Still to answer: ' + missing.join(', ');
   if (m.outcome === 'live' && (m.apgar1.total == null || m.apgar5.total == null)) return 'Record APGAR at 1 and 5 minutes';
   if (!by) return 'Your initials are required';
   return null;
 }
+
+/** The earliest postpartum entry that is not voided, or null. */
+function firstPostpartumEntry(p) {
+  let first = null;
+  for (const o of activeObs(p)) {
+    if (!PP_ENTRY_TYPES.includes(o.type) || !Number.isFinite(toMs(o.time))) continue;
+    if (!first || toMs(o.time) < toMs(first.time)) first = o;
+  }
+  return first;
+}
+
+// Calendar day in Addis Ababa time (YYYY-MM-DD), as the time input shows it.
+const eatDay = iso => isoToLocalInput(iso).slice(0, 10);
+
+/** The check's time; with its date when that is not the day typed for the birth (labour runs past midnight). */
+const checkTime = (at, birth) => (eatDay(at) === eatDay(birth) ? fmtTime(at) : fmtDT(at));
 
 function birthRecord(m, time) {
   const delivery = {
