@@ -89,6 +89,16 @@ export function hadCompanion(p, stage) {
     && (!stage || (stage === 'first' ? toMs(r.time) < split : toMs(r.time) >= split)));
 }
 
+/**
+ * Her second stage is on the record (full dilatation documented). A woman
+ * delivered by caesarean in the first stage never had one, and without the
+ * start of the second stage no companion record can be placed in it, so
+ * only these women make the denominator of the second-stage figure.
+ */
+function reachedSecondStage(p) {
+  return !!p.secondStageStart;
+}
+
 // --------------------------------------------------------------- Robson ----
 
 function fetalPresentation(p) {
@@ -169,7 +179,8 @@ export function computeIndicators(cases, { from = null, to = null, settings = {}
 
   const lcgDone = births.filter(p => auditCase(p, getProtocol(settings, p), now).completed).length;
 
-  let wanted = 0, had = 0, unknown = 0, hadFirst = 0, hadSecond = 0;
+  // byStage.second counts only the women who reached a second stage (reachedSecondStage)
+  let wanted = 0, had = 0, unknown = 0, hadFirst = 0, wantedSecond = 0, hadSecond = 0;
   for (const p of births) {
     const w = companionWanted(p);
     if (w === null) { unknown++; continue; }
@@ -177,6 +188,8 @@ export function computeIndicators(cases, { from = null, to = null, settings = {}
     wanted++;
     if (hadCompanion(p)) had++;
     if (hadCompanion(p, 'first')) hadFirst++;
+    if (!reachedSecondStage(p)) continue;
+    wantedSecond++;
     if (hadCompanion(p, 'second')) hadSecond++;
   }
 
@@ -207,7 +220,7 @@ export function computeIndicators(cases, { from = null, to = null, settings = {}
     lcgUse: ratio(lcgDone, D),
     fhrOnAdmission: ratio(births.filter(fhrOnAdmission).length, D),
     bpOnAdmission: ratio(births.filter(bpOnAdmission).length, D),
-    companion: { ...ratio(had, wanted), unknown, byStage: { first: ratio(hadFirst, wanted), second: ratio(hadSecond, wanted) } },
+    companion: { ...ratio(had, wanted), unknown, byStage: { first: ratio(hadFirst, wanted), second: ratio(hadSecond, wantedSecond) } },
     caesarean: { ...ratio(births.filter(p => p.delivery.mode === 'cs').length, D), robson },
     stillbirths: { ...ratio(sb.length, counted.length), ...split },
   };

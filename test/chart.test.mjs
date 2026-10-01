@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chartSVG, sheetCount, printSheetsHTML, chartSheet, selectChartSheet } from '../js/chart.js';
 import { LIMITS } from '../js/protocol.js';
-import { applyObservations } from '../js/record.js';
+import { applyObservations, voidObservation } from '../js/record.js';
 import { APP_TZ } from '../js/ui.js';
 import { NOW, iso, mkPatient, LCG, ETH } from './helpers.mjs';
 
@@ -442,4 +442,69 @@ test('print: after the last sheet, every note and medication entry that stands i
   assert.ok(appendix.includes('Ampicillin 2 g IV stat, then 1 g IV every 6 hours'));
   assert.ok(appendix.indexOf('Ampicillin') < appendix.indexOf('2.5 U/L'), 'oldest first');
   assert.ok(!printSheetsHTML(mkPatient(), LCG, NOW).includes('print-notes'), 'no appendix without notes or medication');
+});
+
+// ------------------------------------------------------------------- M5 --
+
+test('print: a voided medication entry is left out of the notes appendix, on both layouts', () => {
+  const p = mkPatient({ name: 'Almaz', mrn: 'MRN-7' });
+  const voided = { at: iso(0.5), by: 'TE', reason: 'recorded on the wrong woman' };
+  p.meds.push(
+    { id: 'm1', time: iso(2), kind: 'medicine', detail: 'Ampicillin 2 g IV', by: 'TE', action: 'given' },
+    { id: 'm2', time: iso(1.5), kind: 'medicine', detail: 'Gentamicin 80 mg IV', by: 'TE', action: 'given', voided },
+    { id: 'm3', time: iso(1), kind: 'oxytocin', detail: '', oxyUL: 5, oxyDrops: 20, by: 'AB', action: 'start', voided },
+  );
+  for (const settings of [LCG, ETH]) {
+    const html = printSheetsHTML(p, settings, NOW);
+    const at = html.indexOf('<section class="print-notes">');
+    assert.ok(at > 0, 'the appendix is printed after the sheets');
+    const appendix = html.slice(at);
+    assert.ok(appendix.includes('<td>Ampicillin 2 g IV</td>'), 'the entry that stands is written out');
+    assert.ok(!html.includes('Gentamicin') && !html.includes('5 U/L'), 'a voided medicine or oxytocin entry is printed nowhere');
+    assert.equal((appendix.match(/<tr>/g) || []).length, 2, 'the header row and the one entry that stands');
+  }
+  const onlyVoided = mkPatient();
+  onlyVoided.meds.push({ ...p.meds[1] });
+  assert.ok(!printSheetsHTML(onlyVoided, LCG, NOW).includes('print-notes'), 'only voided medication: no appendix');
+});
+
+test('after a stage move every solid red circle has its alert behind it, and none is missing', () => {
+  const behind = (p, svg) => [...svg.matchAll(/class="flag-circle" data-id="([^"]+)"/g)]
+    .every(m => p.alerts.some(a => (a.obsIds || []).includes(m[1])));
+  // two contractions in 10 minutes in latent labour, then a back-timed 5 cm exam starts active labour before them
+  const p = mkPatient({ activeStartTime: null, status: 'latent' });
+  const { obs: [weak] } = applyObservations(p, iso(3), { contractions: { count: 2 } }, LCG, { by: 'TE' });
+  assert.ok(!svgOf(p).includes('flag-circle'));
+  const { obs: [exam] } = applyObservations(p, iso(4), { exam: { dilatation: 5 } }, LCG, { by: 'TE' });
+  let svg = svgOf(p);
+  assert.ok(svg.includes(`class="flag-circle" data-id="${weak.id}"`), 'circled in the active first stage');
+  assert.ok(behind(p, svg), 'with the weak-contraction alert behind the circle');
+  voidObservation(p, exam.id, LCG, { by: 'TE', reason: 'examined the wrong woman' });
+  svg = svgOf(p);
+  assert.ok(!svg.includes('flag-circle'), 'latent again: not circled');
+  // a mistyped 10 cm exam put a later 7 cm exam in the second stage; voiding it brings the progress limit back
+  const q = mkPatient({ activeStartTime: null, status: 'latent' });
+  applyObservations(q, iso(10), { exam: { dilatation: 7 } }, LCG);
+  const { obs: [ten] } = applyObservations(q, iso(6), { exam: { dilatation: 10 } }, LCG);
+  const { obs: [seven] } = applyObservations(q, iso(5), { exam: { dilatation: 7 } }, LCG);
+  voidObservation(q, ten.id, LCG, { by: 'TE', reason: 'typed 10 for 7' });
+  svg = svgOf(q);
+  assert.ok(svg.includes(`class="flag-circle" data-id="${seven.id}"`), '7 cm for 5 hours is circled on its X');
+  assert.ok(behind(q, svg));
+});
+
+test('an exam judged again after a stage move re-asks an alert acknowledged before it was made: red, not grey', () => {
+  const p = mkPatient({ activeStartTime: null, status: 'latent' });
+  const rec = (hAgo, values) => applyObservations(p, iso(hAgo), values, LCG, { by: 'TE', enteredAt: iso(hAgo) }).obs[0];
+  rec(10, { exam: { dilatation: 7 } });
+  const slow = rec(6.5, { exam: { dilatation: 7 } }); // 7 cm for 3.5 h: the progress alert
+  const alert = p.alerts.find(a => a.code === 'lcg_progress');
+  Object.assign(alert, { ack: true, action: 'senior', actionTime: iso(6.4), ackBy: 'TE' });
+  const ten = rec(6, { exam: { dilatation: 10 } });    // mistyped: a second stage
+  const later = rec(5, { exam: { dilatation: 7 } });   // no progress limit in the second stage
+  const r = voidObservation(p, ten.id, LCG, { by: 'TE', reason: 'typed 10 for 7', at: iso(4) });
+  assert.ok(r.added.includes(alert), 'asked again');
+  const svg = svgOf(p);
+  assert.match(svg, new RegExp(`<ellipse class="flag-circle" data-id="${later.id}"[^>]*stroke="#c62828"`), 'made after the acknowledgement');
+  assert.ok(svg.includes(`class="flag-circle ack" data-id="${slow.id}"`), 'covered by the acknowledgement');
 });

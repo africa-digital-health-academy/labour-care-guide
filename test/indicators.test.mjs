@@ -115,6 +115,24 @@ test('HMIS counts: births by birth date, admissions by admission date, demo excl
   assert.equal(all.births, 4);
 });
 
+test('M5: second-stage companion figure: the denominator is the women who wanted one AND reached the second stage', () => {
+  const sup = (p, hAgo, companion) => p.obs.push({ id: `${p.id}-${hAgo}`, type: 'supportive', time: iso(hAgo), v: { companion }, by: 'TE', flags: [] });
+  const both = birthCase('S1', { secondStageStart: iso(2) });       // a companion in both stages
+  sup(both, 6, 'Y'); sup(both, 1.5, 'Y');
+  const firstOnly = birthCase('S2', { secondStageStart: iso(2) });  // none in the second stage
+  sup(firstOnly, 6, 'Y'); sup(firstOnly, 1.5, 'N');
+  // caesarean in the first stage: wanted and had a companion, never had a second stage
+  const csFirst = birthCase('S3', { delivery: { time: iso(1), mode: 'cs', outcome: 'live' } });
+  sup(csFirst, 6, 'Y');
+  const c = computeIndicators([both, firstOnly, csFirst], { ...JUNE, settings: LCG, now: NOW }).companion;
+  assert.deepEqual([c.n, c.d], [3, 3], 'all three wanted and had a companion');
+  assert.deepEqual([c.byStage.first.n, c.byStage.first.d], [3, 3]);
+  assert.deepEqual([c.byStage.second.n, c.byStage.second.d], [1, 2], 'the first-stage caesarean is in neither part of the figure');
+  assert.equal(c.byStage.second.rate, 0.5);
+  const none = computeIndicators([csFirst], { ...JUNE, settings: LCG, now: NOW }).companion.byStage.second;
+  assert.deepEqual([none.n, none.d, none.rate], [0, 0, null], 'nobody reached a second stage: no rate, never 0 %');
+});
+
 test('companion wish: the explicit answer wins; Y = wanted, D = declined, N alone = unknown', () => {
   assert.equal(companionWanted(mkPatient({ companionWanted: false, admission: { time: iso(6), companion: 'Y' } })), false);
   assert.equal(companionWanted(mkPatient({ admission: { time: iso(6), companion: 'Y' } })), true);

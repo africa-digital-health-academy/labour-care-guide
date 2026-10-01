@@ -11,7 +11,7 @@ import {
   PROTOCOLS, pushingStart, secondStageClockStart, isLabouring, deriveStage, awaitingHandover,
 } from '../js/protocol.js';
 import { CASE_SCHEMA, migrateCase, migrateAll } from '../js/migrate.js';
-import { iso, mkPatient, LCG } from './helpers.mjs';
+import { iso, mkPatient, LCG, ETH } from './helpers.mjs';
 
 const latent = () => mkPatient({ status: 'latent', activeStartTime: null });
 
@@ -334,4 +334,113 @@ test('voiding an admission entry clears what it said on the admission record; ot
   assert.equal(p.admission.dilatation, null);
   assert.equal(p.admission.presentation, null);
   assert.equal(p.admission.fhr, 140, 'only the voided entry type is cleared');
+});
+
+// ------------------------------------- M5: flags after a stage move ----
+// Weak and short contractions are alert values only in active labour, and the
+// progress rules apply in the active first stage only. When a back-timed exam,
+// a void or a correction moves a stage start, the entries it moves across one
+// of those gates are judged again at their own time (record.js restage).
+
+test('M5: a back-timed exam that starts active labour earlier judges the contractions after it again', () => {
+  const p = latent();
+  const c = applyObservations(p, iso(3), { contractions: { count: 2, duration: 70 } }, LCG, { by: 'TE' }).obs[0];
+  assert.deepEqual(c.flags, ['contraction_long'], 'latent: two contractions in 10 minutes are not an alert value');
+  const r = applyObservations(p, iso(4), { exam: { dilatation: 5 } }, LCG, { by: 'AB' });
+  assert.deepEqual(r.transitions, ['active']);
+  assert.deepEqual(c.flags, ['contraction_long', 'weak_contractions'], 'active labour at its time: now an alert value');
+  const weak = p.alerts.find(a => a.code === 'weak_contractions');
+  assert.deepEqual([weak.resolved, weak.ack, weak.time, weak.obsIds], [false, false, c.time, [c.id]]);
+  assert.ok(r.added.includes(weak), 'asked for acknowledgement with the exam that moved the stage');
+});
+
+test('M5: voiding the exam that began active labour takes back the weak and short contraction alerts; other findings stay', () => {
+  const p = latent();
+  const exam = applyObservations(p, iso(4), { exam: { dilatation: 5 } }, LCG, { by: 'TE' }).obs[0];
+  const round = applyObservations(p, iso(3), { contractions: { count: 2, duration: 15 }, baby: { fhr: 170 } }, LCG, { by: 'TE' });
+  const c = round.obs.find(o => o.type === 'contractions');
+  assert.deepEqual(c.flags, ['weak_contractions', 'contraction_short']);
+  const pv = previewVoid(p, exam.id, LCG);
+  assert.equal(pv.resolved.length, 2);
+  assert.ok(pv.resolved.some(t => /Weak contractions/.test(t)) && pv.resolved.some(t => /shorter than/.test(t)), 'the confirm dialog says so');
+  const r = voidObservation(p, exam.id, LCG, { by: 'AB', reason: 'examined the wrong woman' });
+  assert.deepEqual(r.transitions, ['active_reverted']);
+  assert.deepEqual(c.flags, [], 'latent at its time: not alert values');
+  for (const code of ['weak_contractions', 'contraction_short']) {
+    const a = p.alerts.find(x => x.code === code);
+    assert.deepEqual([a.resolved, a.resolvedHow, a.resolvedBy, a.obsIds], [true, 'restaged', 'AB', []], code);
+    assert.ok(r.resolved.includes(a));
+  }
+  assert.equal(p.alerts.find(a => a.code === 'fhr_abn').resolved, false, 'a finding that does not depend on the stage stays');
+  assert.deepEqual(r.added, []);
+});
+
+test('M5: voiding a mistyped 10 cm exam judges the exam after it as an active-stage exam at its own time', () => {
+  const p = latent();
+  applyObservations(p, iso(10), { exam: { dilatation: 7 } }, LCG);
+  const ten = applyObservations(p, iso(6), { exam: { dilatation: 10 } }, LCG).obs[0];
+  const seven = applyObservations(p, iso(5), { exam: { dilatation: 7 } }, LCG).obs[0];
+  assert.deepEqual(seven.flags, [], 'in the second stage the progress limits do not apply');
+  const pv = previewVoid(p, ten.id, LCG);
+  assert.equal(pv.added.length, 1);
+  assert.match(pv.added[0], /No progress: 7 cm/);
+  const r = voidObservation(p, ten.id, LCG, { by: 'TE', reason: 'typed 10 for 7' });
+  assert.deepEqual(r.transitions, ['second_reverted']);
+  assert.deepEqual(seven.flags, ['lcg_progress'], '7 cm for 5 h: over the 3-hour limit');
+  const a = p.alerts.find(x => x.code === 'lcg_progress');
+  assert.deepEqual([a.resolved, a.ack, a.time, a.obsIds], [false, false, seven.time, [seven.id]]);
+  assert.deepEqual(r.added, [a]);
+});
+
+test('M5: Ethiopian partograph: a second stage taken back judges the alert line for the exams after it', () => {
+  const p = mkPatient({ status: 'latent', activeStartTime: null, protocolId: 'ethiopia2021' });
+  applyObservations(p, iso(10), { exam: { dilatation: 4 } }, ETH);
+  const ten = applyObservations(p, iso(8), { exam: { dilatation: 10 } }, ETH).obs[0];
+  const six = applyObservations(p, iso(5), { exam: { dilatation: 6 } }, ETH).obs[0];
+  assert.deepEqual(six.flags, []);
+  voidObservation(p, ten.id, ETH, { by: 'TE', reason: 'typed 10 for 6' });
+  assert.deepEqual(six.flags, ['alert_line'], '6 cm 5 h after 4 cm: right of the alert line, left of the action line');
+});
+
+test('M5: a correction that leaves the stage start where it was leaves the other alerts alone', () => {
+  const p = latent();
+  const exam = applyObservations(p, iso(4), { exam: { dilatation: 5, descent: 4 } }, LCG).obs[0];
+  applyObservations(p, iso(3), { contractions: { count: 2 } }, LCG);
+  const weak = p.alerts.find(a => a.code === 'weak_contractions');
+  Object.assign(weak, { ack: true, action: 'monitoring', actionTime: iso(2.9), ackBy: 'TE' });
+  const r = correctObservation(p, exam.id, { dilatation: 5, descent: 3 }, LCG, { by: 'TE', reason: 'descent mistyped' });
+  assert.deepEqual(r.transitions, []);
+  assert.deepEqual([weak.resolved, weak.ack], [false, true], 'not closed by the void half and asked again by the re-entry');
+  assert.equal(p.alerts.filter(a => a.code === 'weak_contractions').length, 1, 'no new episode');
+  assert.deepEqual(r.added, []);
+});
+
+test('M5: an entry judged again joins an alert acknowledged after it was made, without asking again', () => {
+  const p = latent();
+  const first = applyObservations(p, iso(6), { exam: { dilatation: 4 } }, LCG, { enteredAt: iso(6) }).obs[0];
+  const early = applyObservations(p, iso(3), { contractions: { count: 2 } }, LCG, { enteredAt: iso(3) }).obs[0];
+  applyObservations(p, iso(2), { exam: { dilatation: 5 } }, LCG, { enteredAt: iso(2) });
+  applyObservations(p, iso(1.5), { contractions: { count: 2 } }, LCG, { enteredAt: iso(1.5) });
+  const weak = p.alerts.find(a => a.code === 'weak_contractions');
+  Object.assign(weak, { ack: true, action: 'monitoring', actionTime: iso(1.4), ackBy: 'TE' });
+  // the first exam was 5 cm, not 4: active labour began before the early count
+  const r = correctObservation(p, first.id, { dilatation: 5 }, LCG, { by: 'TE', reason: 'typed 4 for 5' });
+  assert.deepEqual(r.transitions, ['active_moved']);
+  assert.deepEqual(early.flags, ['weak_contractions']);
+  assert.ok(weak.obsIds.includes(early.id));
+  assert.equal(weak.ack, true, 'acknowledged after the early count was made: covered, not asked again');
+  assert.deepEqual(r.added, []);
+});
+
+test('M5: after the birth, a labour finding raised by a stage move is closed at the birth', () => {
+  const p = latent();
+  applyObservations(p, iso(10), { exam: { dilatation: 7 } }, LCG);
+  const ten = applyObservations(p, iso(6), { exam: { dilatation: 10 } }, LCG).obs[0];
+  const seven = applyObservations(p, iso(5), { exam: { dilatation: 7 } }, LCG).obs[0];
+  applyBirth(p, { time: iso(1), outcome: 'live', mode: 'svd', placentaComplete: 'Y' }, {}, LCG, { by: 'TE' });
+  const r = voidObservation(p, ten.id, LCG, { by: 'TE', reason: 'typed 10 for 7' });
+  assert.deepEqual(seven.flags, ['lcg_progress']);
+  const a = p.alerts.find(x => x.code === 'lcg_progress');
+  assert.deepEqual([a.resolved, a.resolvedHow, a.resolvedAt, a.obsIds], [true, 'birth', iso(1), [seven.id]]);
+  assert.deepEqual(r.added, [], 'nothing left to act on after the birth');
 });

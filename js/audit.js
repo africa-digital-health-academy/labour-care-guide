@@ -133,6 +133,18 @@ function initials(p, b) {
   return { windows: total, met, rate: rateOf(met, total) };
 }
 
+/**
+ * Annex 8 section 7 (shared decision-making): an assessment and plan per
+ * hourly column. The note an alert acknowledgement writes (kind 'ack')
+ * records the action taken on that alert, not a decision made with the
+ * woman, so it never fills a column; voided notes never count either.
+ */
+function decisions(p, b) {
+  const times = (p.notes || []).filter(n => !n.voided && n.kind !== 'ack' && (n.text || n.plan)).map(n => toMs(n.time));
+  const w = windows(times, b.start, b.end, 60, b.ongoing);
+  return { windows: w.total, met: w.met, rate: rateOf(w.met, w.total) };
+}
+
 /** When the alert last asked for acknowledgement: raised, severity raised, or asked again by a new entry. */
 function promptedAt(a) {
   return Math.max(...[a.reAlertedAt, a.escalatedAt, a.raisedAt, a.time].filter(Boolean).map(toMs).filter(Number.isFinite));
@@ -185,11 +197,7 @@ export function auditCase(p, proto, now = new Date()) {
     woman: sectionAdherence(p, SECTION_TYPES.woman, b, rec),
     progress: sectionAdherence(p, SECTION_TYPES.progress, b, rec),
     medication: medication(p, proto, b),
-    // Annex 8 section 7: an assessment and plan per hourly column
-    decisions: (() => {
-      const w = windows((p.notes || []).filter(n => !n.voided && (n.text || n.plan)).map(n => toMs(n.time)), b.start, b.end, 60, b.ongoing);
-      return { windows: w.total, met: w.met, rate: rateOf(w.met, w.total) };
-    })(),
+    decisions: decisions(p, b),
     initials: initials(p, b),
   };
   const alerts = { ...alertHandling(p, b), flaggedEntries: activeObs(p).filter(o => inLcg(o) && o.flags && o.flags.length).length };

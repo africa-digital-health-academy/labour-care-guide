@@ -131,3 +131,21 @@ test('an LCG missing a core section is not completed', () => {
   p.obs = p.obs.filter(o => o.type !== 'supportive');
   assert.equal(auditCase(p, PROTOCOLS.lcg, NOW).completed, false);
 });
+
+// ------------------------------------------------------------------- M5 --
+
+test('acknowledgement notes (kind ack) never fill a shared decision-making column', () => {
+  const p = lcgCase();
+  // no assessment and plan at all: only the notes the alert acknowledgements wrote, one in every hour
+  p.notes = [10, 70, 130, 190].map(m => ({
+    time: at(m), kind: 'ack', by: 'TE', text: 'Alerts acknowledged: FHR 165 bpm - outside normal range', plan: 'monitoring',
+  }));
+  let a = auditCase(p, PROTOCOLS.lcg, NOW);
+  assert.deepEqual([a.sections.decisions.met, a.sections.decisions.windows], [0, 4]);
+  assert.ok(a.score < 100);
+  // one assessment and plan recorded in the second hour fills that column only
+  p.notes.push({ time: at(75), by: 'TE', text: 'Progress normal', plan: 'Reassess in 4 h' });
+  a = auditCase(p, PROTOCOLS.lcg, NOW);
+  assert.deepEqual([a.sections.decisions.met, a.sections.decisions.windows], [1, 4]);
+  assert.deepEqual([a.sections.initials.met, a.sections.initials.windows], [5, 5], 'signed acknowledgement notes still count as signed entries');
+});
