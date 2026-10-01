@@ -311,7 +311,8 @@ function referralNote(p) {
       h('h3', null, 'Pre-referral treatment given'),
       h('ul', null, r.checklist.map(c => h('li', null, (c.done ? '☑ ' : '☐ NOT DONE — ') + c.label))),
       h('h3', null, 'Medication in labour'),
-      h('ul', null, givenMeds(p).map(mm => h('li', null, `${fmtTime(mm.time)} — ${medLine(mm)}`)),
+      // with the date: a labour crosses midnight, a time alone is ambiguous
+      h('ul', null, givenMeds(p).map(mm => h('li', null, `${fmtDT(mm.time)} — ${medLine(mm)}`)),
         givenMeds(p).length ? null : h('li', null, 'None recorded')),
       h('hr'),
       kv('Referred by', referrer(r) || '________________'),
@@ -346,8 +347,20 @@ export function buildShareText(p, settings = S.settings) {
     lastExam ? `Exam ${fmtTime(lastExam.time)}: ${lastExam.v.dilatation}cm, descent ${lastExam.v.descent ?? '—'}/5` : '',
     lastBaby ? `FHR ${lastBaby.v.fhr}bpm` : '',
     `Given / done: ${r.checklist.filter(c => c.done).map(c => c.label || c.code).join('; ') || 'see note'}`,
+    medsShareLine(p),
     `By: ${referrer(r) || '-'}, transport: ${transportText(r.transport)}`,
   ].filter(Boolean).join('\n');
+}
+
+/**
+ * The medication in labour for the shared text, latest last, with the date,
+ * and whether oxytocin is still running: the receiving team must know.
+ */
+export function medsShareLine(p) {
+  const meds = givenMeds(p).slice().sort((a, b) => String(a.time).localeCompare(String(b.time)));
+  if (!meds.length) return 'Medication in labour: none recorded';
+  const items = meds.map(m => `${fmtDT(m.time)} ${medLine(m)}`).join('; ');
+  return `Medication in labour: ${items}${p.oxytocinRunning ? ' - OXYTOCIN STILL RUNNING' : ''}`;
 }
 
 function kv(k, v) { return h('div', { class: 'kv' }, h('b', null, k), h('span', null, v)); }

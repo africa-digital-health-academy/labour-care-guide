@@ -63,3 +63,10 @@ test('Ethiopian partograph: a contraction bar is red only where the engine raise
   delete active.obs[0].flags;
   assert.ok(RED_BAR.test(chartSVG(active, ETH, NOW).svg));
 });
+
+test('the chart header line starts beside the title column, never under it', () => {
+  const svg = chartSVG(mkPatient({ riskFactors: ['prior_cs'] }), LCG, NOW).svg;
+  const m = svg.match(/<text x="([0-9.]+)" y="11"[^>]*>Parity /);
+  assert.ok(m, 'header line found');
+  assert.ok(Number(m[1]) >= 160, 'starts at the time grid (x ' + m[1] + '), clear of the title column');
+});

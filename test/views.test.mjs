@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { birthProblem } from '../js/views/delivery.js';
 import { admissionProblem } from '../js/views/admission.js';
-import { referralRecord, transportText, riskText, givenMeds, medLine, buildShareText } from '../js/views/referral.js';
+import { referralRecord, transportText, riskText, givenMeds, medLine, buildShareText, medsShareLine } from '../js/views/referral.js';
 import { recordTypes, admissionExamText, canClose, closeFields } from '../js/views/patient.js';
 import { applyBirth, applyObservations, voidObservation, voidDelivery } from '../js/record.js';
 import { postpartumBPCount, urinePassedSinceBirth, LIMITS } from '../js/protocol.js';
@@ -268,4 +268,18 @@ test('referral share text: risk factors and what was given are in words, never c
   assert.ok(text.includes('MgSO'), text);
   assert.ok(!/Given \/ done: [a-z_]+(, |$)/m.test(text), text);
   assert.ok(text.includes('transport: Private vehicle'), text);
+}));
+
+test('referral share text: medication with the date, and whether oxytocin is still running', () => inEachLanguage(() => {
+  const p = mkPatient({ meds: [
+    { kind: 'oxytocin', detail: '', oxyUL: 10, oxyDrops: 10, action: 'start', time: iso(2) },
+    { kind: 'medicine', detail: 'typo', voided: { by: 'TE' }, time: iso(1) },
+  ], oxytocinRunning: true });
+  const line = medsShareLine(p);
+  assert.ok(line.startsWith('Medication in labour: '), line);
+  assert.ok(line.includes('Oxytocin: 10 U/L, 10 drops/min'), line);
+  assert.ok(!line.includes('typo'), 'a voided medicine is left out');
+  assert.ok(line.endsWith('OXYTOCIN STILL RUNNING'), line);
+  assert.ok(line.includes(fmtDT(iso(2))), 'carries the date, not the time alone');
+  assert.equal(medsShareLine(mkPatient()), 'Medication in labour: none recorded');
 }));
