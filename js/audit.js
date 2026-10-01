@@ -156,7 +156,11 @@ function promptedAt(a) {
 }
 
 function alertHandling(p, b) {
-  const raised = (p.alerts || []).filter(a => a.severity !== 'info' && toMs(a.time) >= b.start && toMs(a.time) <= b.end);
+  // an alert closed in the same save that raised it (an entry corrected or
+  // back-timed after the birth or departure) was never shown and asks for
+  // nothing (needsAck false): it is not an alert the midwife could handle
+  const raised = (p.alerts || []).filter(a => a.severity !== 'info' && a.needsAck !== false
+    && toMs(a.time) >= b.start && toMs(a.time) <= b.end);
   const acked = raised.filter(a => a.ack);
   const inTime = acked.filter(a => a.actionTime
     && toMs(a.actionTime) - promptedAt(a) <= LIMITS.audit.ackWithinMin * MIN);
@@ -175,7 +179,8 @@ function alertHandling(p, b) {
 export function auditCase(p, proto, now = new Date()) {
   const b = bounds(p, now);
   const tool = proto.id === 'lcg' ? 'lcg' : 'partograph';
-  const voided = (p.obs || []).filter(o => o.voided).length;
+  // every voided entry: observations, medication and notes (all can be voided since M6)
+  const voided = [p.obs, p.meds, p.notes].reduce((n, list) => n + (list || []).filter(e => e && e.voided).length, 0);
   if (b.start == null) {
     return { applicable: false, tool, startedAt: null, score: null, completed: false, voided };
   }

@@ -122,9 +122,12 @@ export function flagState(idx, o, fields) {
   // is re-opened, the entry must also predate the re-opening (a tablet clock
   // set back must never grey a value nobody has acknowledged). An older entry
   // judged again after a stage move (record.js restage) can re-open an alert
-  // acknowledged before it was made: it stays red.
-  const covered = a => !!a.actionTime && toMs(a.actionTime) >= made
-    && (a.ack || made < toMs(a.reAlertedAt || a.escalatedAt || 0));
+  // acknowledged before it was made: it stays red. An alert closed in the
+  // same save that raised it (an entry corrected after the birth or her
+  // departure) asks for nothing (needsAck false), so its value is drawn as
+  // handled, never as a red circle no one can ever acknowledge.
+  const covered = a => a.needsAck === false || (!!a.actionTime && toMs(a.actionTime) >= made
+    && (a.ack || made < toMs(a.reAlertedAt || a.escalatedAt || 0)));
   return raised.length && raised.every(covered) ? 'ack' : 'open';
 }
 

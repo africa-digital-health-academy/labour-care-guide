@@ -161,3 +161,25 @@ test('acknowledgement notes saved before M5 (no kind) are recognised by their op
   assert.equal(isAckNote({ text: 'Progress normal' }), false);
   assert.equal(isAckNote(null), false);
 });
+
+test('an alert closed in the same save that raised it (needsAck false) is not counted in alert handling', () => {
+  const p = lcgCase();
+  const t0 = at(30);
+  p.alerts = [
+    { id: 'a1', code: 'fhr_abn', severity: 'warn', time: t0, raisedAt: t0, ack: true, action: 'monitoring', actionTime: at(35) },
+    { id: 'a2', code: 'weak_contractions', severity: 'warn', time: t0, raisedAt: t0, resolved: true, needsAck: false },
+  ];
+  const a = auditCase(p, PROTOCOLS.lcg, NOW);
+  assert.equal(a.alerts.raised, 1, 'only the alert the midwife could handle');
+  assert.equal(a.alerts.ackedInTime, 1);
+});
+
+test('the voided count covers observations, medication and notes', () => {
+  const p = lcgCase();
+  p.meds = [{ id: 'm1', kind: 'medicine', time: at(20), voided: { by: 'TE', reason: 'typo' } }];
+  p.notes = [{ id: 'n1', time: at(25), text: 'x', voided: { by: 'TE', reason: 'typo' } }];
+  const before = auditCase(p, PROTOCOLS.lcg, NOW).voided;
+  p.obs[0].voided = { by: 'TE', reason: 'typo' };
+  assert.equal(auditCase(p, PROTOCOLS.lcg, NOW).voided, before + 1);
+  assert.ok(before >= 2, 'the voided medicine and note are counted');
+});

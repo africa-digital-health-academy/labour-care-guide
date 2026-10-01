@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chartSVG, printSheetsHTML } from '../js/chart.js';
-import { planText } from '../js/partograph.js';
+import { planText, flagState } from '../js/partograph.js';
 import { NOW, iso, mkPatient, LCG, ETH } from './helpers.mjs';
 import { applyObservations } from '../js/record.js';
 
@@ -69,4 +69,12 @@ test('the chart header line starts beside the title column, never under it', () 
   const m = svg.match(/<text x="([0-9.]+)" y="11"[^>]*>Parity /);
   assert.ok(m, 'header line found');
   assert.ok(Number(m[1]) >= 160, 'starts at the time grid (x ' + m[1] + '), clear of the title column');
+});
+
+test('flagState: an alert closed when raised (needsAck false) draws its value as handled, never as a red circle forever', () => {
+  const o = { id: 'o1', time: iso(3) };
+  const quiet = new Map([['o1', [{ code: 'fhr_abn', needsAck: false }]]]);
+  assert.equal(flagState(quiet, o, 'fhr'), 'ack');
+  const open = new Map([['o1', [{ code: 'fhr_abn' }]]]);
+  assert.equal(flagState(open, o, 'fhr'), 'open', 'an ordinary unacknowledged alert stays red');
 });
