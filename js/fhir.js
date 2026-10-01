@@ -13,9 +13,11 @@
 // resolve inside the bundle; stable identifiers (case id, entry id) let a
 // receiver recognise the same record in a later export. Nothing is dropped
 // for having been corrected: a voided entry goes out as entered-in-error with
-// its reason. Pure, except downloadFHIR(), which needs the DOM.
+// its reason. A finding about the baby after the birth always has the newborn
+// Patient as subject, never the mother. Pure, except downloadFHIR(), which
+// needs the DOM, and the default export time (opts.now).
 
-import { isLabouring, activeObs, toMs } from './protocol.js';
+import { isLabouring, inPostpartumWatch, stageOf, birthTime, activeObs, toMs, POSTPARTUM } from './protocol.js';
 import { robsonGroup } from './indicators.js';
 import { APP_TZ_OFFSET } from './ui.js';
 
@@ -274,9 +276,9 @@ const admissionTime = p => (p.admission && p.admission.time) || p.createdAt;
 
 /**
  * One export: a stable key -> UUID map (references resolve inside the bundle,
- * a new export mints new ids) and the entry list.
+ * a new export mints new ids), the entry list and the export time.
  */
-function createContext(p, settings) {
+function createContext(p, settings, now) {
   const ids = new Map();
   const idOf = key => {
     if (!ids.has(key)) ids.set(key, newUUID());
@@ -285,8 +287,9 @@ function createContext(p, settings) {
   const caseId = String(p.id || 'case');
   const entries = [];
   return {
-    p, settings, entries, caseId,
-    hasBaby: !!p.delivery,
+    p, settings, now, entries, caseId,
+    hasBirth: !!p.delivery,
+    hasNewborn: needsNewborn(p),
     ref: key => ({ reference: 'urn:uuid:' + idOf(key) }),
     /** Business identifier: the same record carries the same value in every export. */
     recordId: key => [{ system: LCG + ':record', value: `${caseId}/${key}` }],
@@ -373,6 +376,15 @@ const ENTRY_ELEMENTS = Object.freeze({
 });
 
 const DEFAULTED = 'Recorded as the form default, not changed by the recorder';
+// The entry type whose findings are about the baby after the birth
+const NEWBORN_ENTRY = 'ppBaby';
+const NO_BIRTH_NOTE = 'Newborn check; no birth record on file (voided, not yet recorded again): the newborn has no birth date in this export';
+
+/** The values of an entry that become Observations ('bp' when either half is recorded). */
+function recordedElements(o) {
+  if (!o || !o.v) return [];
+  return (ENTRY_ELEMENTS[o.type] || []).filter(el => (el === 'bp' ? !blank(o.v.sys) || !blank(o.v.dia) : !blank(o.v[el])));
+}
 
 function entrySource(o, el) {
   const defaulted = Array.isArray(o.defaulted) && o.defaulted.includes(el);
@@ -445,16 +457,16 @@ function exportEntry(ctx, o, i) {
     SPECIAL_ENTRY[o.type](ctx, o, id);
     return;
   }
-  const babyCheck = o.type === 'ppBaby';
-  const subject = babyCheck && ctx.hasBaby ? 'newborn' : 'mother';
-  const note = babyCheck && !ctx.hasBaby ? 'Newborn check; no birth record in this export' : undefined;
-  for (const el of ENTRY_ELEMENTS[o.type] || []) {
+  // a baby check is about the newborn, with or without a birth record on file
+  const aboutBaby = o.type === NEWBORN_ENTRY;
+  const subject = aboutBaby ? 'newborn' : 'mother';
+  const note = aboutBaby && !ctx.hasBirth ? NO_BIRTH_NOTE : undefined;
+  for (const el of recordedElements(o)) {
     const key = `obs:${id}:${el}`;
     if (el === 'bp') {
-      if (!blank(o.v.sys) || !blank(o.v.dia)) addBP(ctx, key, entrySource(o, el), o.v, subject);
+      addBP(ctx, key, entrySource(o, el), o.v, subject);
       continue;
     }
-    if (blank(o.v[el])) continue;
     const spec = ELEMENT[el];
     addObservation(ctx, key, entrySource(o, el), { code: spec.code, cat: spec.cat, subject, value: spec.value(o.v[el]), note });
   }
@@ -520,33 +532,51 @@ function exportMother(ctx) {
     address: blank(p.kebele) ? undefined : [{ text: String(p.kebele), country: 'ET' }],
     // Patient.link joins records of the SAME person: here, this Patient and the
     // RelatedPerson "mother of the newborn" (R4 allows a RelatedPerson target)
-    link: ctx.hasBaby ? [{ other: ctx.ref('mother-of-newborn'), type: 'seealso' }] : undefined,
+    link: ctx.hasNewborn ? [{ other: ctx.ref('mother-of-newborn'), type: 'seealso' }] : undefined,
   });
 }
 
+const WATCH_MIN = POSTPARTUM.watchHours * 60;
+const watchEnd = p => minutesAfter(birthTime(p), WATCH_MIN);
+/** The 24 h postpartum watch after a recorded birth has run out by `now`. */
+const watchOver = (p, now) => !!watchEnd(p) && toMs(watchEnd(p)) <= toMs(now);
+
 /**
- * in-progress while labour is monitored (a referred woman until she leaves,
- * S8); finished once the birth is recorded, the case is closed or she has
- * been handed over on referral.
+ * The stay (protocol.js decides): in-progress while she labours, while a
+ * referred woman has not left (S8) and through the 24 h postpartum watch;
+ * finished once the case is closed, she has left on referral or the watch has
+ * run out. A record that fits none of these (a delivered status with no birth
+ * record, a time of birth ahead of the clock) is unknown.
  */
-function encounterStatus(p) {
-  if (p.delivery) return 'finished';
-  if (isLabouring(p)) return 'in-progress';
-  if (p.status === 'delivered' || p.status === 'closed' || (p.referral && p.referral.handoverAt)) return 'finished';
+function encounterStatus(p, now) {
+  if (isLabouring(p) || inPostpartumWatch(p, now)) return 'in-progress';
+  if (stageOf(p) === 'closed' || (p.referral && p.referral.handoverAt) || watchOver(p, now)) return 'finished';
   return 'unknown';
 }
 
-/** End of a finished stay: the last care recorded - birth, handover or the last postpartum check. */
-function encounterEnd(p) {
-  const times = [p.delivery && p.delivery.time, p.referral && p.referral.handoverAt, ...activeObs(p).map(o => o.time)]
-    .filter(t => !blank(t) && Number.isFinite(toMs(t)));
-  if (!times.length) return p.closedAt || undefined;
-  return times.reduce((a, b) => (toMs(b) > toMs(a) ? b : a));
+/**
+ * When a finished stay ended: the moment it became finished, so the end never
+ * moves between exports - the first of her departure on referral (one recorded
+ * before the birth did not end it), the case closure and the end of the watch.
+ */
+function encounterEnd(p, now) {
+  const birth = birthTime(p);
+  const r = p.referral || {};
+  const left = r.handoverAt && !(birth && toMs(r.handoverAt) < toMs(birth)) ? r.handoverAt : null;
+  const ends = [left, stageOf(p) === 'closed' ? p.closedAt : null, watchOver(p, now) ? watchEnd(p) : null].filter(t => when(t));
+  if (!ends.length) return lastCare(p);
+  return ends.reduce((a, b) => (toMs(b) < toMs(a) ? b : a));
+}
+
+/** The last care recorded (birth, handover, latest entry): the end of a legacy record closed without a time. */
+function lastCare(p) {
+  const times = [birthTime(p), p.referral && p.referral.handoverAt, ...activeObs(p).map(o => o.time)].filter(t => when(t));
+  return times.length ? times.reduce((a, b) => (toMs(b) > toMs(a) ? b : a)) : undefined;
 }
 
 function exportEncounter(ctx) {
-  const { p, settings } = ctx;
-  const status = encounterStatus(p);
+  const { p, settings, now } = ctx;
+  const status = encounterStatus(p, now);
   const r = p.referral;
   const admittedBy = p.admission && p.admission.by;
   ctx.add('encounter', 'Encounter', {
@@ -556,7 +586,7 @@ function exportEncounter(ctx) {
     type: [cc(C.labourEncounter)],
     subject: ctx.ref('mother'),
     participant: byRef(admittedBy) ? [{ type: [cc([PARTICIPATION, 'ADM', 'admitter'])], individual: byRef(admittedBy) }] : undefined,
-    period: compact({ start: when(admissionTime(p)), end: status === 'finished' ? when(encounterEnd(p)) : undefined }),
+    period: compact({ start: when(admissionTime(p)), end: status === 'finished' ? when(encounterEnd(p, now)) : undefined }),
     hospitalization: r && r.handoverAt ? compact({
       dischargeDisposition: cc([DISCHARGE, 'other-hcf', 'Other healthcare facility']),
       destination: blank(r.facility) ? undefined : { display: String(r.facility) },
@@ -568,18 +598,35 @@ function exportEncounter(ctx) {
 // ---------------------------------------------------------------- birth ----
 
 const isStillbirth = d => !blank(d.outcome) && d.outcome !== 'live';
+// Alerts about the baby after the birth: the ppBaby rules (nb_*) and the birth record's APGAR rule
+const isNewbornAlert = code => typeof code === 'string' && (code.startsWith('nb_') || code === 'apgar_low');
 
-/** The newborn, and the mother as her RelatedPerson (two people: never a Patient.link between them). */
+/**
+ * The newborn Patient goes out with the birth record and with any finding
+ * about the baby - a baby check or a newborn alert, voided or not - even when
+ * the birth record is not on file (voided, not yet recorded again).
+ */
+function needsNewborn(p) {
+  return !!p.delivery
+    || (p.obs || []).some(o => o && o.type === NEWBORN_ENTRY && recordedElements(o).length > 0)
+    || (p.alerts || []).some(a => exportsFlag(a) && isNewbornAlert(a.code));
+}
+
+/**
+ * The newborn, and the mother as her RelatedPerson (two people: never a
+ * Patient.link between them). With no birth record on file: no birth date,
+ * gender unknown - the same identifier, so a later export completes it.
+ */
 function exportNewborn(ctx) {
   const { p } = ctx;
-  const d = p.delivery, nb = p.newborn || {};
-  const born = wardTime(d.time);
+  const d = p.delivery, nb = (d && p.newborn) || {};
+  const born = d ? wardTime(d.time) : null;
   ctx.add('newborn', 'Patient', {
     identifier: ctx.recordId('newborn'),
     gender: nb.sex === 'M' ? 'male' : nb.sex === 'F' ? 'female' : 'unknown',
     birthDate: born ? born.date : undefined,
     _birthDate: born ? { extension: [{ url: BIRTH_TIME, valueDateTime: born.dateTime }] } : undefined,
-    deceasedBoolean: isStillbirth(d) ? true : undefined,
+    deceasedBoolean: d && isStillbirth(d) ? true : undefined,
   });
   ctx.add('mother-of-newborn', 'RelatedPerson', {
     patient: ctx.ref('newborn'),
@@ -587,6 +634,11 @@ function exportNewborn(ctx) {
     name: blank(p.name) ? undefined : [{ text: String(p.name) }],
     gender: 'female',
   });
+  if (d) exportBirthMeasures(ctx, d, nb);
+}
+
+/** What the birth form measured on the baby: birth weight and APGAR. */
+function exportBirthMeasures(ctx, d, nb) {
   const src = { time: d.time, by: d.by };
   if (!blank(nb.weightG)) {
     addObservation(ctx, 'newborn:weight', src, { code: C.birthWeight, cat: EXAM, subject: 'newborn', value: measured('g', 'g')(nb.weightG) });
@@ -600,7 +652,7 @@ function exportNewborn(ctx) {
   }
 }
 
-/** The birth as a Procedure (mode, incl. caesarean), its outcome, and what the birth form measured. */
+/** The birth as a Procedure (mode, incl. caesarean), its outcome (about the baby), and what the birth form measured on the mother. */
 function exportBirth(ctx) {
   const d = ctx.p.delivery;
   ctx.add('birth', 'Procedure', {
@@ -618,7 +670,8 @@ function exportBirth(ctx) {
     const timing = isStillbirth(d)
       ? [{ code: cc(C.sbTiming), valueCodeableConcept: valueConcept(V.sbTiming, d.stillbirthTiming || 'unknown') }] : undefined;
     addObservation(ctx, 'birth:outcome', src, {
-      code: C.outcome, cat: PROCEDURE, partOf, value: { valueCodeableConcept: valueConcept(V.outcome, d.outcome) }, component: timing,
+      code: C.outcome, cat: PROCEDURE, subject: 'newborn', partOf,
+      value: { valueCodeableConcept: valueConcept(V.outcome, d.outcome) }, component: timing,
     });
   }
   if (!blank(d.eblMl)) {
@@ -651,15 +704,18 @@ function exportRobson(ctx) {
 
 // ---------------------------------------------------------- flags, referral ----
 
+const exportsFlag = a => !!a && a.severity !== 'info';
+
+/** A Flag on the mother, or on the newborn for an alert about the baby. */
 function exportAlert(ctx, a, i) {
-  if (!a || a.severity === 'info') return;
+  if (!exportsFlag(a)) return;
   const key = `alert:${a.id || 'i' + i}`;
   ctx.add(key, 'Flag', {
     identifier: ctx.recordId(key),
     status: a.resolved ? 'inactive' : 'active',
     category: [cc([FLAG_CATEGORY, 'clinical', 'Clinical'])],
     code: compact({ coding: blank(a.code) ? undefined : [coding(LCG + ':alert', String(a.code))], text: a.title || a.code || 'Alert' }),
-    subject: ctx.ref('mother'),
+    subject: ctx.ref(isNewbornAlert(a.code) ? 'newborn' : 'mother'),
     period: compact({ start: when(a.time), end: a.resolved ? when(a.resolvedAt) : undefined }),
     encounter: ctx.ref('encounter'),
   });
@@ -696,16 +752,17 @@ function exportReferral(ctx) {
 const timeOrder = (a, b) => (toMs(a && a.time) || 0) - (toMs(b && b.time) || 0);
 
 /**
- * The case as a FHIR R4 Bundle (type collection). opts.now stamps the bundle
- * (tests); every call mints new resource ids.
+ * The case as a FHIR R4 Bundle (type collection). opts.now is the export
+ * time: it stamps the bundle and decides whether the postpartum watch is still
+ * running (tests pass it). Every call mints new resource ids.
  */
 export function buildFHIRBundle(p, settings = {}, { now = new Date() } = {}) {
-  const ctx = createContext(p, settings || {});
+  const ctx = createContext(p, settings || {}, now);
   exportMother(ctx);
   exportEncounter(ctx);
-  if (ctx.hasBaby) exportNewborn(ctx);
+  if (ctx.hasNewborn) exportNewborn(ctx);
   [...(p.obs || [])].sort(timeOrder).forEach((o, i) => exportEntry(ctx, o, i));
-  if (ctx.hasBaby) exportBirth(ctx);
+  if (ctx.hasBirth) exportBirth(ctx);
   exportRobson(ctx);
   (p.meds || []).forEach((m, i) => exportMedication(ctx, m, i));
   (p.alerts || []).forEach((a, i) => exportAlert(ctx, a, i));

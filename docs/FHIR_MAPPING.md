@@ -18,25 +18,39 @@ There is no published WHO SMART Guidelines DAK or HL7 implementation guide for i
 
 | App data | FHIR resource |
 |---|---|
-| Mother | `Patient` (gender female, MRN identifier `urn:ethiopia:mrn`, name, phone, kebele). When a birth is recorded, `Patient.link` (type `seealso`) points to the RelatedPerson below - the same woman in her role as mother. |
-| Labour admission | `Encounter`: class IMP, type SCT 236973005 *Delivery procedure*, admitting midwife as participant (v3 ParticipationType ADM). |
+| Mother | `Patient` (gender female, MRN identifier `urn:ethiopia:mrn`, name, phone, kebele). Whenever the newborn is exported, `Patient.link` (type `seealso`) points to the RelatedPerson below - the same woman in her role as mother. |
+| Labour admission | `Encounter`: class IMP, type SCT 236973005 *Delivery procedure*, admitting midwife as participant (v3 ParticipationType ADM). Status and end: see *Encounter status*. |
 | Each recorded value | `Observation` (one per value; see the code tables). `effectiveDateTime` = the entry time, `performer` = the initials, `category` always present. |
-| Birth | `Procedure` coded by the mode of birth, performer = initials on the birth record; the birth outcome and the blood loss at birth are Observations `partOf` it. |
-| Newborn | `Patient` (gender, `birthDate` = East Africa Time date of birth, `_birthDate` extension `patient-birthTime` with the +03:00 time, `deceasedBoolean` true for a stillbirth); birth weight, APGAR and postpartum baby checks are about this Patient. |
+| Birth | `Procedure` coded by the mode of birth, performer = initials on the birth record; the birth outcome (subject: the newborn) and the blood loss at birth (subject: the mother) are Observations `partOf` it. |
+| Newborn | `Patient` (identifier `<case id>/newborn`, gender, `birthDate` = East Africa Time date of birth, `_birthDate` extension `patient-birthTime` with the +03:00 time, `deceasedBoolean` true for a stillbirth). Exported with the birth record and whenever any newborn finding exists, also when the birth record is not on file (then no `birthDate`, gender `unknown`). Subject of every newborn finding: see *Mother or newborn*. |
 | Mother of the newborn | `RelatedPerson` (`patient` = the newborn, relationship v3 RoleCode MTH *mother*). |
 | Medicine, IV fluids, oxytocin | `MedicationAdministration` (performer = initials). Oxytocin: SCT 112115002; the LCG oxytocin row and each start/rate record carry `dosage.rateQuantity` in `{drop}/min` with the U/L in `dosage.text`; a stop record has status `stopped`. |
-| Alerts (warn, danger) | `Flag`: status active/inactive, category `clinical`, code = alert code in `urn:labour-care-guide:alert` with the alert title as text, period = raised to resolved. |
+| Alerts (warn, danger) | `Flag`: status active/inactive, category `clinical`, code = alert code in `urn:labour-care-guide:alert` with the alert title as text, period = raised to resolved. Subject = the mother, or the newborn for a newborn alert (`nb_breathing`, `nb_cold`, `nb_hot`, `nb_feeding`, `apgar_low`). |
 | Referral | `ServiceRequest`: SCT 3457005 *Patient referral*, intent order, priority urgent, requester = referring midwife and initials, performer = receiving facility, reasons, pre-referral care given and NOT done in notes. Status `active` until her departure is recorded, then `completed`. |
 
 ### Encounter status
 
+She is an inpatient under care until she leaves or the case ends, so the stay is read from `js/protocol.js` (`isLabouring`, `inPostpartumWatch`) at the export time (`buildFHIRBundle(p, settings, { now })`).
+
 | Case | Encounter.status | period.end |
 |---|---|---|
 | Latent, active or second stage | `in-progress` | - |
-| Referred, departure not yet recorded (monitoring continues, S8) | `in-progress` | - |
-| Birth recorded (`delivered`) | `finished` | last care recorded: birth or the last postpartum check |
-| Referred and handed over | `finished`, `hospitalization.dischargeDisposition` = `other-hcf`, destination = receiving facility | the handover |
-| Closed | `finished` | as above |
+| Referred, departure not yet recorded (monitoring continues, S8) - in labour or after the birth | `in-progress` | - |
+| Birth recorded, within the 24 h postpartum watch | `in-progress` | - |
+| Referred and departed (handover recorded) | `finished`, `hospitalization.dischargeDisposition` = `other-hcf`, destination = receiving facility | the departure |
+| Closed (`closedAt`) | `finished` | the closure |
+| Birth recorded, 24 h watch over, case not closed | `finished` | the end of the watch (birth + 24 h) |
+| Anything else (a `delivered` status with no birth record, a time of birth ahead of the export clock) | `unknown` | - |
+
+`period.end` is set only when the status is `finished`, and it is the moment the stay became finished - the first of the departure, the closure and the end of the watch - so it does not move between exports: a case closed after its watch ran out keeps the end of the watch. A departure recorded before the time of birth does not end the stay (as in `inPostpartumWatch`). A legacy record closed without a closure time ends at the last care recorded.
+
+### Mother or newborn: whose finding
+
+- **Newborn findings name the newborn `Patient` as `subject`, never the mother**: birth weight, APGAR 1/5/10, the birth outcome (with the timing of a stillbirth), the postpartum baby checks (breathing, temperature, feeding) and the newborn alerts as Flags. This holds for voided (entered-in-error) entries too.
+- **Birth record not on file** (voided into `deliveryHistory`, not yet recorded again): the baby checks and newborn alerts recorded before the correction still go to the newborn. The newborn `Patient` goes out with the same identifier `<case id>/newborn`, no `birthDate` and gender `unknown`, and each baby-check Observation carries the note "no birth record on file". The next export with the new birth record completes the same Patient.
+- **Fetal findings in labour stay on the mother**: FHR, decelerations and amniotic fluid. Their codes name the fetus, and the fetus is not a Patient.
+- **The stillbirth alert stays on the mother**: it asks for respectful supportive care of her and her family.
+- Newborn findings keep the labour Encounter as their context; no separate newborn Encounter is made. Essential newborn care and resuscitation are not exported yet; when they are, the same rule applies.
 
 ### Mother and newborn: why not Patient.link
 
@@ -47,7 +61,7 @@ FHIR R4 `Patient.link` joins two records of the **same person** (all four types 
 - **Voided entries are exported, not dropped**: `status: entered-in-error`, the value kept as entered, and a note `Entered in error (voided): <reason>` with the voiding initials (`authorString`) and time. Voided medication records likewise.
 - **Form defaults**: a value the wizard committed without the midwife touching it (`entry.defaulted`) carries the note "Recorded as the form default, not changed by the recorder".
 - **Robson group** is `preliminary` until the birth is recorded, then `final`; it is omitted when a variable is missing (`robsonGroup()` returns null).
-- A birth record that was corrected stays in the case history (`deliveryHistory`) and is not exported; only the current birth record is.
+- A birth record that was corrected stays in the case history (`deliveryHistory`) and is not exported; only the current birth record is. Baby checks recorded before the correction still go out, on the newborn (see *Mother or newborn*).
 
 ## Observation codes
 
@@ -137,7 +151,7 @@ Local code systems: `urn:labour-care-guide:observation` (companion, pain-relief,
 - Displays aligned to the code systems (e.g. 278067008 has no "palpable"; 85354-9 is the full LOINC name).
 - ids were `<case>-<n>` strings under `urn:uuid:` (invalid); now real UUIDs.
 - The newborn birth date was the UTC date (a birth at 01:30 was dated the day before); now the East Africa Time date.
-- Encounter was `finished` only for referrals; now by outcome as above.
+- Encounter was `finished` only for referrals; now by the stay as above (in-progress through labour, a pending referral and the 24 h postpartum watch).
 - The baby was declared the same person as the mother (Patient.link); now RelatedPerson.
 - Added: performer from initials, entered-in-error for voided entries, categories, amniotic fluid, decelerations, presentation and position, urine, supportive care, pushing, blood loss, postpartum mother and baby checks, birth outcome and mode (incl. caesarean), Robson group, oxytocin infusion rows, a moulding or caput of none (v1 skipped zero).
 

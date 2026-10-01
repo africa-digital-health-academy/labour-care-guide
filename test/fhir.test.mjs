@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildFHIRBundle, fhirFilename, newUUID } from '../js/fhir.js';
-import { iso, mkPatient } from './helpers.mjs';
+import { voidDelivery } from '../js/record.js';
+import { NOW, LCG, iso, mkPatient } from './helpers.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const OBS_CATEGORY = 'http://terminology.hl7.org/CodeSystem/observation-category';
@@ -71,6 +72,15 @@ const allRefs = b => {
   JSON.stringify(b, (k, v) => { if (k === 'reference') out.push(v); return v; });
   return out;
 };
+const encounterAt = (p, now = NOW) => resources(buildFHIRBundle(p, SETTINGS, { now }), 'Encounter')[0];
+const REFERRAL = Object.freeze({
+  time: iso(2), reasons: ['Slow progress'], checklist: [{ code: 'iv', label: 'IV line', done: true }],
+  facility: 'Primary Hospital', by: 'AB', handoverAt: null,
+});
+const alert = (id, code, severity, obsId) => ({
+  id, code, severity, title: code, time: iso(0.5), lastSeen: iso(0.5), source: obsId ? 'obs' : 'birth',
+  obsId: obsId || null, obsIds: obsId ? [obsId] : [], resolved: false,
+});
 
 test('bundle has the core resources and serialises', () => {
   const b = buildFHIRBundle(sample(), SETTINGS);
@@ -153,31 +163,61 @@ test('each export mints new ids; the business identifiers stay the same', () => 
   assert.equal(resources(a, 'Encounter')[0].identifier[0].value, 'case-1');
 });
 
-test('Encounter status: in-progress while monitored, finished after birth, closure or handover', () => {
-  const enc = p => resources(buildFHIRBundle(p, SETTINGS), 'Encounter')[0];
-  const labour = enc(fullCase({ status: 'active' }));
+test('Encounter in-progress, no period.end: labouring, referred and not yet left, in the 24 h postpartum watch', () => {
+  const labour = encounterAt(fullCase({ status: 'active' }));
   assert.equal(labour.status, 'in-progress');
+  assert.equal(labour.period.start, iso(6));
   assert.equal(labour.period.end, undefined);
 
-  const referral = { time: iso(2), reasons: ['Slow progress'], checklist: [{ code: 'iv', label: 'IV line', done: true }], facility: 'Primary Hospital', by: 'AB', handoverAt: null };
-  const waiting = fullCase({ status: 'referred', referral });
-  assert.equal(enc(waiting).status, 'in-progress', 'monitored until she leaves (S8)');
-  assert.equal(resources(buildFHIRBundle(waiting, SETTINGS), 'ServiceRequest')[0].status, 'active');
+  const waiting = fullCase({ status: 'referred', referral: { ...REFERRAL } });
+  assert.equal(encounterAt(waiting).status, 'in-progress', 'monitored until she leaves (S8)');
+  assert.equal(encounterAt(waiting).period.end, undefined);
+  assert.equal(resources(buildFHIRBundle(waiting, SETTINGS, { now: NOW }), 'ServiceRequest')[0].status, 'active');
 
-  const gone = fullCase({ status: 'referred', referral: { ...referral, handoverAt: iso(1.5), handoverBy: 'AB' } });
-  const e = enc(gone);
+  // born at iso(1): one hour, then 23.9 h, into the watch - still an inpatient under care
+  for (const now of [NOW, iso(-22.9)]) {
+    const watch = encounterAt(bornCase(), now);
+    assert.equal(watch.status, 'in-progress', String(now));
+    assert.equal(watch.period.end, undefined, 'no end while the watch runs, so none to move between exports');
+  }
+
+  // referred after the birth, transport not yet left: the watch goes on
+  const ppWaiting = Object.assign(bornCase(), { status: 'referred', referral: { ...REFERRAL, time: iso(0.6) } });
+  assert.equal(encounterAt(ppWaiting).status, 'in-progress');
+});
+
+test('Encounter finished: left on referral, case closed or watch over; period.end is when it ended and stays put', () => {
+  const gone = fullCase({ status: 'referred', referral: { ...REFERRAL, handoverAt: iso(1.5), handoverBy: 'AB' } });
+  const e = encounterAt(gone);
   assert.equal(e.status, 'finished');
+  assert.equal(e.period.end, iso(1.5), 'her departure');
   assert.equal(e.hospitalization.dischargeDisposition.coding[0].code, 'other-hcf');
   assert.equal(e.hospitalization.destination.display, 'Primary Hospital');
-  assert.equal(resources(buildFHIRBundle(gone, SETTINGS), 'ServiceRequest')[0].status, 'completed');
+  assert.equal(resources(buildFHIRBundle(gone, SETTINGS, { now: NOW }), 'ServiceRequest')[0].status, 'completed');
 
-  const born = enc(bornCase());
-  assert.equal(born.status, 'finished');
-  assert.equal(born.period.end, iso(0.5), 'ends with the last care recorded (the postpartum check)');
+  // referred after the birth and gone during the watch
+  const ppGone = Object.assign(bornCase(), { status: 'referred', referral: { ...REFERRAL, time: iso(0.6), handoverAt: iso(0.25) } });
+  assert.equal(encounterAt(ppGone).status, 'finished');
+  assert.equal(encounterAt(ppGone).period.end, iso(0.25));
 
-  const closed = bornCase();
-  Object.assign(closed, { status: 'closed', closedAt: iso(0.1), closedBy: 'CD' });
-  assert.equal(enc(closed).status, 'finished');
+  // closed during the watch
+  const closed = Object.assign(bornCase(), { status: 'closed', closedAt: iso(0.1), closedBy: 'CD' });
+  assert.equal(encounterAt(closed).status, 'finished');
+  assert.equal(encounterAt(closed).period.end, iso(0.1));
+
+  // the watch ran out (birth + 24 h = iso(-23)); closing the case later does not move the end
+  const born = bornCase();
+  const over = encounterAt(born, iso(-30));
+  assert.equal(over.status, 'finished');
+  assert.equal(over.period.end, iso(-23));
+  Object.assign(born, { status: 'closed', closedAt: iso(-40), closedBy: 'CD' });
+  assert.equal(encounterAt(born, iso(-48)).period.end, iso(-23));
+});
+
+test('Encounter unknown when the record cannot say: a delivered status with no birth record', () => {
+  const e = encounterAt(fullCase({ status: 'delivered' }));
+  assert.equal(e.status, 'unknown');
+  assert.equal(e.period.end, undefined);
 });
 
 test('stillbirth: outcome, timing of death and a deceased newborn; a live birth stays alive', () => {
@@ -188,6 +228,7 @@ test('stillbirth: outcome, timing of death and a deceased newborn; a live birth 
   assert.equal(out.partOf[0].reference, urlOf(fresh, resources(fresh, 'Procedure')[0]));
   const baby = resources(fresh, 'Patient').find(r => r.gender !== 'female' || r.deceasedBoolean);
   assert.equal(baby.deceasedBoolean, true);
+  assert.equal(out.subject.reference, urlOf(fresh, baby), 'the outcome is about the baby');
   assert.equal(withCode(fresh, '9272-6').length, 0, 'no APGAR recorded for a stillbirth');
 
   const macerated = buildFHIRBundle(bornCase({ outcome: 'sb_macerated' }), SETTINGS);
@@ -285,6 +326,68 @@ test('the newborn is linked to her mother through RelatedPerson, never a Patient
   assert.equal(rp.relationship[0].coding[0].code, 'MTH');
   assert.equal(mother.link[0].other.reference, urlOf(b, rp));
   for (const l of mother.link) assert.ok(['replaced-by', 'replaces', 'refer', 'seealso'].includes(l.type), l.type);
+});
+
+test('every newborn finding has the newborn as subject: weight, APGAR, outcome, baby checks, newborn alerts', () => {
+  const p = bornCase();
+  p.alerts.push(alert('a1', 'nb_breathing', 'danger', 'pb'), alert('a2', 'apgar_low', 'danger'),
+    alert('a3', 'pp_atony', 'danger', 'pm'), alert('a4', 'fhr_abn', 'warn', 'b1'));
+  const b = buildFHIRBundle(p, SETTINGS, { now: NOW });
+  const [mother, baby] = resources(b, 'Patient');
+  const about = r => r.subject.reference;
+  for (const code of ['8339-4', '9272-6', '9274-2', '364587008', '248565000', '364652002', 'nb_breathing', 'apgar_low']) {
+    assert.equal(about(one(b, code)), urlOf(b, baby), code);
+  }
+  const temp = value => withCode(b, '8310-5').find(r => r.valueQuantity.value === value);
+  assert.equal(about(temp(36.2)), urlOf(b, baby), 'the baby check temperature');
+  assert.equal(about(temp(36.8)), urlOf(b, mother), 'her own temperature in labour');
+  assert.equal(about(one(b, 'pp_atony')), urlOf(b, mother));
+  // fetal findings in labour stay on the mother: the fetus is not a Patient
+  for (const code of ['55283-6', '364364001', 'fhr_abn']) assert.ok(withCode(b, code).every(r => about(r) === urlOf(b, mother)), code);
+  assert.equal(one(b, '364587008').partOf[0].reference, urlOf(b, resources(b, 'Procedure')[0]));
+  assert.equal(temp(36.2).note, undefined, 'no missing-birth note while the birth is on record');
+});
+
+test('birth record voided, not yet recorded again: the baby check still goes to the newborn, never the mother', () => {
+  const p = bornCase();
+  p.alerts.push(alert('a1', 'nb_cold', 'warn', 'pb'), alert('a2', 'pp_bleeding', 'danger', 'pm'));
+  voidDelivery(p, LCG, { by: 'CD', reason: 'recorded on the wrong woman', at: iso(0.25) });
+  assert.equal(p.delivery, null);
+  assert.equal(p.deliveryHistory.length, 1);
+  const b = buildFHIRBundle(p, SETTINGS, { now: NOW });
+  const [mother, baby] = resources(b, 'Patient');
+  assert.equal(resources(b, 'Patient').length, 2, 'the newborn goes out without a birth record');
+  assert.deepEqual(baby.identifier, [{ system: 'urn:labour-care-guide:record', value: 'case-1/newborn' }]);
+  assert.equal(baby.birthDate, undefined);
+  assert.equal(baby._birthDate, undefined);
+  assert.equal(baby.gender, 'unknown');
+  const check = resources(b, 'Observation').filter(r => r.identifier[0].value.startsWith('case-1/obs:pb:'));
+  assert.equal(check.length, 3, 'breathing, temperature, feeding');
+  for (const r of check) {
+    assert.equal(r.subject.reference, urlOf(b, baby));
+    assert.match(r.note[0].text, /no birth record on file/);
+  }
+  const onMother = resources(b, 'Observation').filter(r => r.subject.reference === urlOf(b, mother));
+  assert.ok(!onMother.some(r => r.valueQuantity && r.valueQuantity.value === 36.2), '36.2 C is never a maternal temperature');
+  assert.ok(!onMother.some(r => hasCode(r, '248565000') || hasCode(r, '364652002')));
+  assert.equal(one(b, 'nb_cold').subject.reference, urlOf(b, baby));
+  assert.equal(one(b, 'pp_bleeding').subject.reference, urlOf(b, mother));
+  const rp = resources(b, 'RelatedPerson')[0];
+  assert.equal(rp.patient.reference, urlOf(b, baby));
+  assert.equal(mother.link[0].other.reference, urlOf(b, rp));
+  // nothing from the voided birth record goes out
+  assert.equal(resources(b, 'Procedure').length, 0);
+  for (const code of ['8339-4', '9272-6', '9274-2', '364587008']) assert.equal(withCode(b, code).length, 0, code);
+  assert.equal(resources(b, 'Encounter')[0].status, 'in-progress', 'in labour again until the birth is recorded again');
+  const urls = new Set(b.entry.map(e => e.fullUrl));
+  for (const r of allRefs(b)) assert.ok(urls.has(r), `reference ${r} resolves inside the bundle`);
+});
+
+test('no newborn Patient before the birth when nothing is about the baby', () => {
+  const b = buildFHIRBundle(fullCase({ status: 'active' }), SETTINGS, { now: NOW });
+  assert.equal(resources(b, 'Patient').length, 1);
+  assert.equal(resources(b, 'RelatedPerson').length, 0);
+  assert.equal(resources(b, 'Patient')[0].link, undefined);
 });
 
 test('WHO LCG rows: amniotic fluid, decelerations, supportive care, pushing, blood loss, postpartum checks', () => {
