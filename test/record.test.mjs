@@ -16,6 +16,8 @@ import {
 import { CASE_SCHEMA, migrateCase, migrateAll } from '../js/migrate.js';
 import { chartSVG, sheetCount } from '../js/chart.js';
 import { ackIndex, flagState, ALERT_CODES, planText } from '../js/partograph.js';
+import { waitingAlerts } from '../js/views/patient.js';
+import { alertsToAcknowledge } from '../js/wizard.js';
 import { NOW, iso, mkPatient, LCG, ETH, codes } from './helpers.mjs';
 
 const latent = () => mkPatient({ status: 'latent', activeStartTime: null });
@@ -1042,6 +1044,77 @@ test('M6: an entry at the birth itself is judged in its labour stage, and its la
   // after the birth itself an entry stands as before: an oxytocin rate is asked as usual
   const later = applyObservations(p, iso(0.9), { oxytocin: { dropsMin: 70 } }, LCG, { by: 'TE' });
   assert.deepEqual([codes(later.added), later.added[0].resolved], [['oxy_rate'], false]);
+});
+
+// ------------------ M6 review: a re-opened alert always asks; settle by the alert's own time ----
+
+/** In active labour (5 cm 7 h ago), FHR 140 3 h ago; a birth recorded on her by mistake 2 h ago. */
+function wrongBirth() {
+  const p = admitted(8);
+  applyObservations(p, iso(7), { exam: { dilatation: 5 } }, LCG, { by: 'TE', enteredAt: iso(7) });
+  const fhr = applyObservations(p, iso(3), { baby: { fhr: 140 } }, LCG, { by: 'TE', enteredAt: iso(3) }).obs[0];
+  applyBirth(p, { time: iso(2), outcome: 'live', placentaComplete: 'Y' }, {}, LCG, { by: 'TE', enteredAt: iso(2) });
+  return { p, fhr };
+}
+
+test('M6 review: the birth voided, a finding closed unasked at it re-opens asking - strip, dialog, chart; a repeat joins it, still asking', () => {
+  const { p, fhr } = wrongBirth();
+  // the FHR corrected to 95 after the birth: fhr_severe opens and closes at the birth in the same save
+  const c = correctObservation(p, fhr.id, { fhr: 95 }, LCG, { by: 'TE', reason: 'typed 140 for 95', at: iso(1.5) });
+  const severe = p.alerts.find(a => a.code === 'fhr_severe');
+  assert.deepEqual([severe.resolvedHow, severe.needsAck, c.added], ['birth', false, []]);
+  const v = voidDelivery(p, LCG, { by: 'TE', reason: 'recorded on the wrong woman', at: iso(1) });
+  assert.equal(isLabouring(p), true, 'back in labour');
+  assert.deepEqual([v.reopened, severe.resolved, severe.ack, severe.needsAck], [[severe], false, false, undefined]);
+  assert.deepEqual(waitingAlerts(p).open, [severe], 'the alert strip and its Acknowledge button ask');
+  assert.deepEqual(alertsToAcknowledge(v.reopened), [severe], 'the acknowledgement dialog asks');
+  assert.equal(flagState(ackIndex(p), c.obs[0], 'fhr'), 'open', 'the chart circles 95 in red, not grey');
+  chartAgrees(p, LCG);
+  // a repeat FHR 95 joins the open alert, which still waits for its acknowledgement
+  const again = applyObservations(p, iso(0.5), { baby: { fhr: 95 } }, LCG, { by: 'TE', enteredAt: iso(0.5) });
+  assert.deepEqual([severe.count, severe.obsIds, severe.ack], [2, [c.obs[0].id, again.obs[0].id], false]);
+  assert.deepEqual(waitingAlerts(p).open, [severe]);
+  assert.equal(flagState(ackIndex(p), again.obs[0], 'fhr'), 'open');
+});
+
+test('M6 review: the birth voided after her departure, a finding closed unasked closes again at the departure, still unasked', () => {
+  const left = q => {
+    applyReferral(q, { time: iso(1.8), reasons: ['Abnormal FHR'], facility: 'Hospital' }, { by: 'TE' });
+    recordEvent(q, 'handover', iso(1.6), LCG, { by: 'TE' });
+  };
+  const { p, fhr } = wrongBirth();
+  left(p);
+  correctObservation(p, fhr.id, { fhr: 95 }, LCG, { by: 'TE', reason: 'typed 140 for 95', at: iso(1.5) });
+  const severe = p.alerts.find(a => a.code === 'fhr_severe');
+  const v = voidDelivery(p, LCG, { by: 'TE', reason: 'recorded on the wrong woman', at: iso(1) });
+  assert.deepEqual([severe.resolved, severe.resolvedHow, severe.resolvedAt, severe.needsAck], [true, 'handover', iso(1.6), false]);
+  assert.deepEqual([v.reopened, waitingAlerts(p).closed], [[], []]);
+  // as if the birth had never been recorded: the correction after her departure closes it there, unasked
+  const twin = admitted(8);
+  applyObservations(twin, iso(7), { exam: { dilatation: 5 } }, LCG, { by: 'TE', enteredAt: iso(7) });
+  const f = applyObservations(twin, iso(3), { baby: { fhr: 140 } }, LCG, { by: 'TE', enteredAt: iso(3) }).obs[0];
+  left(twin);
+  correctObservation(twin, f.id, { fhr: 95 }, LCG, { by: 'TE', reason: 'typed 140 for 95', at: iso(1.5) });
+  const t = twin.alerts.find(a => a.code === 'fhr_severe');
+  assert.deepEqual([t.resolvedHow, t.resolvedAt, t.needsAck], [severe.resolvedHow, severe.resolvedAt, severe.needsAck]);
+});
+
+test('M6 review: a labour entry back-timed after the birth joins the live rate alert of an infusion still running; it stays open', () => {
+  const p = admitted(8);
+  applyObservations(p, iso(7), { exam: { dilatation: 6 } }, LCG, { enteredAt: iso(7) });
+  applyBirth(p, { time: iso(3), outcome: 'live', placentaComplete: 'Y' }, {}, LCG, { by: 'TE', enteredAt: iso(3) });
+  // the infusion runs on after the birth at 70 drops/min: a live alert, acknowledged
+  const rate = applyObservations(p, iso(2), { oxytocin: { dropsMin: 70 } }, LCG, { by: 'TE', enteredAt: iso(2) }).added[0];
+  Object.assign(rate, { ack: true, action: 'monitoring', actionTime: iso(1.9), ackBy: 'TE' });
+  // its labour record, timed before the birth, entered now
+  const back = applyObservations(p, iso(4), { oxytocin: { dropsMin: 70 } }, LCG, { by: 'TE' });
+  assert.deepEqual([rate.code, rate.resolved, rate.resolvedAt, back.resolved], ['oxy_rate', false, undefined, []],
+    'never closed at the birth, before it was raised');
+  assert.deepEqual([rate.obsIds.includes(back.obs[0].id), p.alerts.filter(a => a.code === 'oxy_rate')], [true, [rate]], 'joined');
+  // a labour entry of its own after the birth still closes at the birth, unasked, as before
+  const own = applyObservations(p, iso(5), { contractions: { count: 6 } }, LCG, { by: 'TE' });
+  const tachy = p.alerts.find(a => a.code === 'tachysystole');
+  assert.deepEqual([tachy.resolvedHow, tachy.resolvedAt, tachy.needsAck, own.added], ['birth', iso(3), false, []]);
 });
 
 test('M6: the referral note states its plan in words, as the summary and the chart plan row show it', () => {

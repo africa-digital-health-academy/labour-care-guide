@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateObs, evaluateTime, FLAG, haemodynamicSigns, pphTrigger } from '../js/alerts.js';
+import { evaluateObs, evaluateTime, FLAG, haemodynamicSigns, pphTrigger, urineGrade } from '../js/alerts.js';
 import { LIMITS, CLOSE_FHR_CODES } from '../js/protocol.js';
-import { applyObservations } from '../js/record.js';
+import { applyObservations, correctObservation } from '../js/record.js';
 import { NOW, iso, mkPatient } from './helpers.mjs';
 
 const settings = { protocol: 'lcg' };
@@ -133,6 +133,90 @@ test('M6: a baby check never re-runs the PPH check - it neither joins the alert 
     assert.ok(codes(evaluateObs(p, { type, time: iso(1.1), v: {} }, settings)).includes('pph'), type);
   }
   assert.ok(!codes(evaluateObs(p, { type: 'ppBaby', time: iso(1.1), v: {} }, settings)).includes('pph'));
+});
+
+// ------------------------------- M6 review: a defaulted value is no evidence ----
+// The wizard pre-selects decelerations none, moulding 0 and companion Y; one
+// committed untouched (entry.defaulted) is not a finding, so it never clears an
+// alert. The same value touched by the midwife is evidence.
+
+test('M6 review: a defaulted "no decelerations" never clears late decelerations; the FHR typed with it still clears its own alert', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(2), { baby: { fhr: 165, decel: 'late' } }, settings, { by: 'TE' });
+  const decel = p.alerts.find(a => a.code === 'decel'), fhr = p.alerts.find(a => a.code === 'fhr_abn');
+  assert.equal(decel.severity, 'danger');
+  // 30 min later the FHR is typed and Next tapped through the deceleration step
+  const next = applyObservations(p, iso(1.5), { baby: { fhr: 140, decel: 'none' } }, settings,
+    { by: 'TE', defaulted: { baby: ['decel'] } });
+  assert.deepEqual([decel.resolved, fhr.resolved, next.resolved], [false, true, [fhr]], 'the typed FHR is evidence, the default is not');
+  const real = applyObservations(p, iso(1), { baby: { fhr: 142, decel: 'none' } }, settings, { by: 'TE' });
+  assert.deepEqual([decel.resolved, decel.resolvedHow, decel.resolvedByObs], [true, 'evidence', real.obs[0].id], 'answered: none');
+});
+
+test('M6 review: correcting another value of the entry keeps the untouched default from becoming evidence', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(2), { baby: { fhr: 165, decel: 'late' } }, settings, { by: 'TE' });
+  const decel = p.alerts.find(a => a.code === 'decel');
+  const skipped = applyObservations(p, iso(1.5), { baby: { fhr: 140, decel: 'none' } }, settings,
+    { by: 'TE', defaulted: { baby: ['decel'] } }).obs[0];
+  // the FHR typo corrected; the wizard prefills decelerations 'none' as it was
+  const fixed = correctObservation(p, skipped.id, { fhr: 145, decel: 'none' }, settings, { by: 'TE', reason: 'typo', at: iso(1.4) }).obs[0];
+  assert.deepEqual([fixed.defaulted, decel.resolved], [['decel'], false]);
+  // corrected to an answer the midwife chose: early decelerations are no alert value, so that clears it
+  const answered = correctObservation(p, fixed.id, { fhr: 145, decel: 'early' }, settings, { by: 'TE', reason: 'decelerations seen', at: iso(1.3) }).obs[0];
+  assert.deepEqual([answered.defaulted, decel.resolved, decel.resolvedByObs], [undefined, true, answered.id]);
+});
+
+test('M6 review: a defaulted moulding 0 never clears moulding +++; a touched 0 does', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(4), { exam: { dilatation: 6, moulding: 3 } }, settings, { by: 'TE' });
+  const m = p.alerts.find(a => a.code === 'moulding3');
+  applyObservations(p, iso(2), { exam: { dilatation: 7, presentation: 'cephalic', caput: 0, moulding: 0 } }, settings,
+    { by: 'TE', defaulted: { exam: ['presentation', 'caput', 'moulding'] } });
+  assert.equal(m.resolved, false, 'obstruction is still the finding on record');
+  applyObservations(p, iso(1), { exam: { dilatation: 8, moulding: 0 } }, settings, { by: 'TE' });
+  assert.deepEqual([m.resolved, m.resolvedHow], [true, 'evidence']);
+});
+
+test('M6 review: a defaulted companion Y never clears "no companion"; a touched Y does', () => {
+  const p = mkPatient();
+  applyObservations(p, iso(3), { supportive: { companion: 'N', painRelief: 'Y', oralFluid: 'Y', posture: 'MO' } }, settings, { by: 'TE' });
+  const a = p.alerts.find(x => x.code === 'no_companion');
+  applyObservations(p, iso(2), { supportive: { companion: 'Y', painRelief: 'Y', oralFluid: 'Y', posture: 'upright' } }, settings,
+    { by: 'TE', defaulted: { supportive: ['companion', 'painRelief', 'oralFluid', 'posture'] } });
+  assert.equal(a.resolved, false);
+  applyObservations(p, iso(1), { supportive: { companion: 'Y' } }, settings, { by: 'TE' });
+  assert.deepEqual([a.resolved, a.resolvedHow], [true, 'evidence']);
+});
+
+// ---------------------------------------- M6 review: urine notations ----
+// The manual records P (protein) and A (acetone) as Negative, Trace, + to ++++
+// and also writes 'P 2+', 'A 1+', 'P -'. An unreadable value is not assessed:
+// it never alerts and never clears an alert - it was graded negative before.
+
+test('M6 review: the manual\'s urine notations are graded; an unreadable value is not assessed, never negative', () => {
+  const grades = {
+    neg: 0, nil: 0, Negative: 0, '-': 0, 'P -': 0, 'P \u2013': 0, trace: 0.5, 'P Trace': 0.5,
+    '+': 1, '1+': 1, 'A+': 1, 'P 1+': 1, '++': 2, '2+': 2, 'P++': 2, 'A 2+': 2, '+++': 3, 'P 3+': 3, '++++': 4, 'A 4+': 4,
+  };
+  for (const [s, g] of Object.entries(grades)) assert.equal(urineGrade(s), g, s);
+  for (const s of ['pos', 'positive', '2', '5+', '+++++', '?', 'P', '']) assert.equal(urineGrade(s), null, `'${s}'`);
+  for (const [s, flagged] of [['2+', true], ['P++', true], ['A 3+', true], ['1+', false], ['P Trace', false], ['pos', false]]) {
+    assert.equal(FLAG.urine(s), flagged, s);
+    const got = codes(evaluateObs(mkPatient(), { type: 'vitals', time: iso(0), v: { protein: s, acetone: s } }, settings));
+    assert.deepEqual(got, flagged ? ['proteinuria', 'ketonuria'] : [], s);
+  }
+});
+
+test('M6 review: an unreadable urine value neither alerts nor clears proteinuria; a graded one below the alert value clears it', () => {
+  const p = mkPatient();
+  const r = applyObservations(p, iso(3), { vitals: { sys: 120, dia: 80, protein: '2+' } }, settings, { by: 'TE' });
+  assert.deepEqual(codes(r.added), ['proteinuria'], 'the manual\'s 2+ is the alert value');
+  const a = r.added[0];
+  const odd = applyObservations(p, iso(2), { vitals: { sys: 118, dia: 78, protein: 'pos' } }, settings, { by: 'TE' });
+  assert.deepEqual([odd.obs[0].flags, a.resolved], [[], false], 'not assessed: no alert of its own, and no evidence');
+  applyObservations(p, iso(1), { vitals: { sys: 118, dia: 78, protein: 'P 1+' } }, settings, { by: 'TE' });
+  assert.deepEqual([a.resolved, a.resolvedHow], [true, 'evidence']);
 });
 
 test('FLAG.newbornTemp marks exactly the temperatures the ppBaby rule alerts on (nb_cold, nb_hot)', () => {

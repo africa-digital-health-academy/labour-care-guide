@@ -232,8 +232,10 @@ export function auditCase(p, proto, now = new Date()) {
     activeMin: b.active ? Math.round((b.active.to - b.active.from) / MIN) : null,
     secondMin: b.second ? Math.round((b.second.to - b.second.from) / MIN) : null,
   };
-  durations.activeOver12h = durations.activeMin != null && durations.activeMin >= 12 * 60;
-  durations.secondOver3h = durations.secondMin != null && durations.secondMin >= 3 * 60;
+  // Annex 8 stage lengths (LIMITS.audit.stageLongHours: 12 h and 3 h, which the flag names carry)
+  const long = LIMITS.audit.stageLongHours;
+  durations.activeOver12h = durations.activeMin != null && durations.activeMin >= long.active * 60;
+  durations.secondOver3h = durations.secondMin != null && durations.secondMin >= long.second * 60;
 
   // Operational definition for the "LCG use" indicator (IRP Table 3),
   // PANEL-TO-CONFIRM: an LCG case with name and parity recorded and at least

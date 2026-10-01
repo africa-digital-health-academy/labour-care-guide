@@ -111,6 +111,9 @@ export const LIMITS = {
   },
   audit: {
     ackWithinMin: 15,        // PANEL-TO-CONFIRM: acknowledgement counted as timely
+    // IRP Annex 8 lengths of labour: active first stage 12 h or more, second
+    // stage 3 h or more, whatever the parity (audit.js durations)
+    stageLongHours: { active: 12, second: 3 },
     // PANEL-TO-CONFIRM: section weights of the per-case score (audit.js)
     weights: { header: 1, supportive: 1, baby: 2, woman: 1, progress: 2, medication: 1, decisions: 1, initials: 1, alerts: 2 },
   },

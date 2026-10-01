@@ -207,9 +207,12 @@ function restoreAsk(a, was) {
  * for after labour: when labour has ended on this device and the entry is
  * timed before an end - a back-timed entry, a correction, an entry judged
  * again - a labour finding has nothing left to act on, so it is closed at the
- * first end after the entry, the birth or her departure (as applyBirth and the
- * departure close the open ones), and not returned for acknowledgement. The
- * entry keeps its flags: the chart still circles the value as it stood.
+ * first end after its own last finding (endAfter on the alert's lastSeen, as
+ * closeAfterLabour), the birth or her departure (as applyBirth and the
+ * departure close the open ones), and not returned for acknowledgement. An
+ * alert the entry joined that was seen after every end - the rate alert of an
+ * oxytocin infusion still running after the birth - is live and stands.
+ * The entry keeps its flags: the chart still circles the value as it stood.
  * Closed in the save that raised it, the alert was never shown open, so it
  * never asks for acknowledgement: a new one is marked needsAck: false (the
  * alert strip and the acknowledgement dialog skip it), and one the entry
@@ -217,12 +220,12 @@ function restoreAsk(a, was) {
  * so an alert acknowledged earlier is not asked again. Maternal findings stay
  * open into the postpartum watch. Returns {added, resolved}.
  */
-function settle(p, o, alerts, asked) {
-  const end = endAfter(p, o.time);
-  const over = a => !!end && LABOUR_ONLY.includes(a.code) && !a.resolved;
-  const added = alerts.filter(a => !over(a));
-  const resolved = [];
-  for (const a of alerts.filter(over)) {
+function settle(p, alerts, asked) {
+  const endOf = a => (LABOUR_ONLY.includes(a.code) && !a.resolved ? endAfter(p, a.lastSeen || a.time) : null);
+  const added = [], resolved = [];
+  for (const a of alerts) {
+    const end = endOf(a);
+    if (!end) { added.push(a); continue; }
     resolved.push(...resolveWhere(p, x => x === a, end.at, end.how));
     if (asked.has(a)) restoreAsk(a, asked.get(a));
     else a.needsAck = false;
@@ -254,12 +257,14 @@ function closeAfterLabour(p) {
  * was in (snap: the stage start times to read it from) and the entries made up
  * to then - so a back-timed entry means what it would have meant entered on
  * time, and a later exam never changes what an earlier one meant. An entry
- * made now is judged exactly as the live case.
+ * made now is judged exactly as the live case. The PPH trigger alone reads
+ * the whole case: it is cumulative, so a reading entered late completes it
+ * with the mother's entries made after its own time (alerts.js pphCheck).
  */
 function judge(p, o, settings, snap = stageSnapshot(p)) {
   const t = toMs(o.time);
   const then = { ...p, status: stageThen(p, snap, o.time), obs: activeObs(p).filter(x => toMs(x.time) <= t) };
-  return evaluateObs(then, o, settings);
+  return evaluateObs(then, o, settings, p);
 }
 
 /**
@@ -323,7 +328,7 @@ function restage(p, settings, before, { at, by = null, skip = [], from = null })
     for (const code of had.filter(c => !drafts.some(d => d.code === c))) out.resolved.push(...letGo(p, o, code, at, by));
     for (const d of drafts.filter(x => !had.includes(x.code))) {
       const asked = askState(p);
-      const s = settle(p, o, raise(p, o, d, at), asked);
+      const s = settle(p, raise(p, o, d, at), asked);
       out.added.push(...s.added);
       out.resolved.push(...s.resolved);
     }
@@ -378,7 +383,7 @@ function recordRound(p, timeISO, values, settings, opts, restaging) {
     const drafts = judge(p, o, settings, snap);
     o.flags = drafts.map(d => d.code);
     const asked = askState(p);
-    const s = settle(p, o, addAlerts(p, drafts, 'obs', { time: o.time, obsId: o.id, raisedAt: enteredAt }), asked);
+    const s = settle(p, addAlerts(p, drafts, 'obs', { time: o.time, obsId: o.id, raisedAt: enteredAt }), asked);
     added.push(...s.added);
     closed.push(...s.resolved);
   }
@@ -496,7 +501,10 @@ function mirrorAdmission(p, type, v) {
  * run once at its end, in the same save; addedByClock holds the titles of the
  * alerts they opened. After the birth or her departure, a labour finding the
  * void half re-opened and the corrected values did not clear closes again at
- * that end (closeAfterLabour). opts: by, reason, time (the corrected
+ * that end (closeAfterLabour). A value the correction leaves as it was keeps
+ * its defaulted mark (the wizard prefills the old values): a step default
+ * nobody touched never becomes evidence by correcting another value of the
+ * entry (alerts.js readsAll). opts: by, reason, time (the corrected
  * observation time, default the old one), at (when the correction is made,
  * default now).
  */
@@ -505,9 +513,10 @@ export function correctObservation(p, obsId, newValues, settings, { by = null, r
   if (!old) throw new Error('Entry not found');
   const when = at || nowISO();
   const before = stageSnapshot(p);
+  const kept = (old.defaulted || []).filter(k => newValues && old.v && newValues[k] !== undefined && newValues[k] === old.v[k]);
   const voided = voidEntry(p, obsId, settings, { by, reason, at: when }, false);
   const applied = recordRound(p, time || old.time, { [old.type]: newValues }, settings,
-    { by, source: old.source || 'entry', replaces: obsId, enteredAt: when }, false);
+    { by, source: old.source || 'entry', replaces: obsId, enteredAt: when, defaulted: { [old.type]: kept } }, false);
   const fresh = applied.obs[0];
   if (fresh && old.source === 'admission') mirrorAdmission(p, old.type, fresh.v);
   // the exams after the earlier of the two times read the changed exam
@@ -615,12 +624,18 @@ export function voidDelivery(p, settings, { by = null, reason = '', at } = {}) {
   p.delivery = null;
   p.newborn = null;
   const resolved = resolveWhere(p, a => a.source === 'birth', when, 'void', by);
-  // labour findings the birth had closed apply again (time rules re-fire on the tick)
+  // labour findings the birth had closed apply again (time rules re-fire on the
+  // tick); open again, one never acknowledged asks for it (alerts.js reopen),
+  // also one the birth had closed in the save that raised it (needsAck false)
+  const unasked = new Set((p.alerts || []).filter(a => a.needsAck === false));
   const reopened = reopenWhere(p, a => a.resolvedHow === 'birth' && a.source !== 'time');
   p.status = p.referral ? 'referred' : 'latent';
   deriveStage(p, getProtocol(settings, p));
   reconcileAlerts(p, settings);
   const ended = closeAfterLabour(p);
+  // one that closes again at her departure in this same save was never shown
+  // open: it asks for nothing, as if the birth had never been recorded (settle)
+  for (const a of ended) if (unasked.has(a)) a.needsAck = false;
   return { status: p.status, resolved: [...resolved, ...ended], reopened: reopened.filter(a => !a.resolved) };
 }
 
