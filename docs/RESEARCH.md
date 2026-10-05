@@ -132,4 +132,4 @@ Conclusion: **build greenfield, license the code openly (MIT), document the FHIR
 4. Check the PPH 2025 trigger values and the tranexamic acid and carbetocin wording against the full guideline text (section 3).
 5. Professional review of the draft Amharic strings; alert titles and advice are translated only after the panel validates them.
 6. Register the pilot with MoH digital-health governance (a Blueprint requirement).
-7. Confirm with the MoH HMIS team whether DHIS2 reporting periods follow the Ethiopian calendar month (reports use Gregorian months today, with the Ethiopian dates shown).
+7. Settle with the MoH HMIS team, through an HMIS focal person: which DHIS2 period Pagume's five or six days are reported in, whether some facilities close the month on a fixed day, and how the counts map to DHIS2 data elements. The Reports screen already counts by Ethiopian month (a Gregorian | Both | Ethiopian button, Both by default, Pagume as the 13th month; DESIGN.md section 9).

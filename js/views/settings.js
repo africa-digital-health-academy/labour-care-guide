@@ -144,7 +144,7 @@ export function renderSettings() {
   return page;
 }
 
-/** "Source and documentation: <link>. Licensed MIT." - one sentence for translators, {link} marks the link. */
+/** "Source and documentation: <link>. Code licensed MIT; WHO-derived content under CC BY-NC-SA 3.0 IGO (see NOTICE-WHO.md)." - one sentence for translators, {link} marks the link. */
 function sourceLine() {
   const [before, after] = t('rp.source_line').split('{link}');
   return h('p', { class: 'muted' }, before, extLink(REPO_URL, REPO_URL), after);
