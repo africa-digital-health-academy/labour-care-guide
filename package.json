@@ -1,6 +1,6 @@
 {
   "name": "labour-care-guide",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Offline-first digital implementation of the WHO Labour Care Guide (2020) for midwives in resource-limited settings",
   "private": true,
   "type": "module",

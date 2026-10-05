@@ -4,4 +4,4 @@
 // release is exactly one edit here: the offline cache key and the About screen
 // follow automatically. Classic-script compatible on purpose (no `export`):
 // importScripts() cannot load ES modules.
-self.LCG_VERSION = '2.0.2';
+self.LCG_VERSION = '2.0.3';

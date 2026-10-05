@@ -87,7 +87,7 @@ export const en = {
   'rp.hmis_pph': 'PPH ({ml} mL, or {mlSigns} mL with abnormal signs)',
   'rp.hmis_referred': 'Referred out in labour',
   'rp.hmis_monitored': 'Monitored ({n} or more entries)',
-  'rp.hmis_note': 'These map to the monthly HMIS/DHIS2 delivery-care indicators. Births are counted by date of birth; demo cases are not counted.',
+  'rp.hmis_note': 'These counts cover the cases recorded on this device and can help prepare the monthly HMIS delivery report; the facility register remains the source. Mapping to DHIS2 data elements is planned. Births are counted by date of birth; demo cases are not counted.',
 
   // ---- reports: export, backup and restore
   'rp.export_title': 'Export',
@@ -149,7 +149,7 @@ export const en = {
   'rp.disclaimer': 'DISCLAIMER: This software is a decision-support and documentation aid for skilled birth attendants. It is not a certified medical device and does not replace clinical judgement, national protocols, or senior consultation. Pilot use must be approved by the responsible health authorities.',
   'rp.check_updates': 'Check for updates',
   // {link} is replaced by the repository link itself (not by t())
-  'rp.source_line': 'Source and documentation: {link}. Licensed MIT.',
+  'rp.source_line': 'Source and documentation: {link}. Code licensed MIT; WHO-derived content under CC BY-NC-SA 3.0 IGO (see NOTICE-WHO.md).',
   // About: further reading (N5) - links only, no WHO text copied
   'rp.resources': 'Training and implementation resources',
   'rp.res_irp': 'WHO labour care guide: implementation resource package',
@@ -251,7 +251,7 @@ export const am = {
   'rp.hmis_pph': 'PPH ({ml} mL፣ ወይም ያልተለመዱ ምልክቶች ካሉ {mlSigns} mL)',
   'rp.hmis_referred': 'በምጥ ላይ እያሉ ሪፈር የተደረጉ',
   'rp.hmis_monitored': 'ክትትል የተደረገላቸው ({n} ወይም ከዚያ በላይ መዝገቦች)',
-  'rp.hmis_note': 'እነዚህ ከወርሃዊ የHMIS/DHIS2 የወሊድ እንክብካቤ አመልካቾች ጋር ይዛመዳሉ። ወሊዶች የሚቆጠሩት በተወለዱበት ቀን ነው፤ የማሳያ (demo) መዝገቦች አይቆጠሩም።',
+  'rp.hmis_note': 'ወሊዶች የሚቆጠሩት በተወለዱበት ቀን ነው፤ የማሳያ (demo) መዝገቦች አይቆጠሩም።',
 
   // ---- reports: export, backup and restore
   'rp.export_title': 'ወደ ውጪ መላክ',
@@ -312,7 +312,7 @@ export const am = {
   'rp.not_who': 'ይህ የWHO ምርት አይደለም፤ WHO አላጸደቀውም። ገደቦቹና ኮዶቹ የWHO የምጥ እንክብካቤ መመሪያን የተጠቃሚ መመሪያ ይከተላሉ፤ በምንጭ ኮዱ ማከማቻ ውስጥ NOTICE-WHO.md ይመልከቱ።',
   'rp.disclaimer': 'የኃላፊነት ማስተባበያ፦ ይህ ሶፍትዌር ለሰለጠኑ የወሊድ አገልግሎት ሰጪዎች የውሳኔ ድጋፍና የመዝገብ መርጃ ነው። የተረጋገጠ የሕክምና መሣሪያ አይደለም፤ ክሊኒካዊ ውሳኔን፣ ብሔራዊ ፕሮቶኮሎችን ወይም የከፍተኛ ባለሙያ ምክክርን አይተካም። የሙከራ አጠቃቀሙ በሚመለከታቸው የጤና ባለሥልጣናት መጽደቅ አለበት።',
   'rp.check_updates': 'ዝማኔዎችን ፈትሽ',
-  'rp.source_line': 'ምንጭ ኮድና ሰነዶች፦ {link}። ፈቃድ፦ MIT።',
+  'rp.source_line': 'ምንጭ ኮድና ሰነዶች፦ {link}። ፈቃድ፦ MIT (WHO-derived content: CC BY-NC-SA 3.0 IGO, NOTICE-WHO.md)።',
   'rp.resources': 'የስልጠናና የትግበራ መርጃዎች',
   // published titles stay in the language of the document (English)
   'rp.res_irp': 'WHO labour care guide: implementation resource package',

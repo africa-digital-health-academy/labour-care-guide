@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.0.3 - 5 October 2026
+
+Documentation and wording only. No clinical rule, threshold, alert or
+calculation changed. Still a public preview, not for facility use before the
+clinical panel review.
+
+- NOTICE-WHO.md: the sentence on reproduced WHO phrases now says what is
+  true: the advice attached to alerts paraphrases the source documents and in
+  places reuses short WHO phrases, and the sources are attributed as a whole,
+  in the notice and on the About screen, not next to each phrase. Two sources
+  the code already cites are now listed, with their licence: the Robson
+  classification implementation manual (2017) and the WHO recommendation on
+  tranexamic acid for the treatment of postpartum haemorrhage (2017).
+- About screen: the source line now reads "Code licensed MIT; WHO-derived
+  content under CC BY-NC-SA 3.0 IGO (see NOTICE-WHO.md)", instead of the MIT
+  licence alone. The Amharic line carries the same note in Latin script.
+- Reports: the note under the HMIS delivery counts no longer says they map to
+  the DHIS2 indicators. It says the counts cover the cases recorded on this
+  device and can help prepare the monthly HMIS delivery report, that the
+  facility register remains the source, and that mapping to DHIS2 data
+  elements is planned. The
+  Amharic note drops its DHIS2 sentence and keeps the rest (the Amharic
+  reviewer is asked to look at the key rp.hmis_note).
+- Roadmap and research notes: the Ethiopian-month reports (Gregorian | Both |
+  Ethiopian button, Pagume as the 13th month, built in 2.0.0) are described
+  as built. What stays open for an HMIS focal person: the DHIS2 period for
+  Pagume's days, a possible fixed monthly closing day, and the mapping to
+  DHIS2 data elements.
+- README status line brought up to date (version, date). Version 2.0.3 in
+  js/version.js (the service-worker cache key) and package.json.
+- Tests: 541, unchanged.
+
 ## 2.0.2 - 1 October 2026
 
 - A public-preview notice. Outreach e-mails and posts link straight to the
