@@ -17,8 +17,10 @@ clinical panel review.
   content under CC BY-NC-SA 3.0 IGO (see NOTICE-WHO.md)", instead of the MIT
   licence alone. The Amharic line carries the same note in Latin script.
 - Reports: the note under the HMIS delivery counts no longer says they map to
-  the DHIS2 indicators. It says the counts are intended for the monthly HMIS
-  delivery report and that mapping to DHIS2 data elements is planned. The
+  the DHIS2 indicators. It says the counts cover the cases recorded on this
+  device and can help prepare the monthly HMIS delivery report, that the
+  facility register remains the source, and that mapping to DHIS2 data
+  elements is planned. The
   Amharic note drops its DHIS2 sentence and keeps the rest (the Amharic
   reviewer is asked to look at the key rp.hmis_note).
 - Roadmap and research notes: the Ethiopian-month reports (Gregorian | Both |

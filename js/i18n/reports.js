@@ -87,7 +87,7 @@ export const en = {
   'rp.hmis_pph': 'PPH ({ml} mL, or {mlSigns} mL with abnormal signs)',
   'rp.hmis_referred': 'Referred out in labour',
   'rp.hmis_monitored': 'Monitored ({n} or more entries)',
-  'rp.hmis_note': 'These counts are intended for the monthly HMIS delivery report; mapping to DHIS2 data elements is planned. Births are counted by date of birth; demo cases are not counted.',
+  'rp.hmis_note': 'These counts cover the cases recorded on this device and can help prepare the monthly HMIS delivery report; the facility register remains the source. Mapping to DHIS2 data elements is planned. Births are counted by date of birth; demo cases are not counted.',
 
   // ---- reports: export, backup and restore
   'rp.export_title': 'Export',
